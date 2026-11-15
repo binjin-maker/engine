@@ -55,7 +55,7 @@ static void EvPush(long long when, int bank, int kind, float amp) {
 }
 
 // ----- sfx -----
-enum { SFX_CLICK, SFX_SELECT, SFX_TICK, SFX_POP, SFX_ACH, SFX_KEY, SFX_RATCHET, SFX_BEEP, SFX_WARN, SFX_DONE };
+enum { SFX_CLICK, SFX_SELECT, SFX_TICK, SFX_POP, SFX_ACH, SFX_KEY, SFX_RATCHET, SFX_BEEP, SFX_WARN, SFX_DONE, SFX_STALL };
 typedef struct { int type, on; float t, ph, ph2; } Voice;
 static Voice gVox[12];
 static int gSfxTail = 0;
@@ -87,6 +87,7 @@ static float SfxRun(void) {
   case SFX_RATCHET: len = 0.5f; { float ph = fmodf(t, 0.06f); s = Nz() * expf(-ph * 260) * 0.25f * (1 - t * 1.6f); } break;
   case SFX_BEEP: len = 0.42f; s = ((t < 0.12f) || (t > 0.24f && t < 0.36f)) ? sinf(2 * PI * 1320 * t) * 0.12f : 0; break;
   case SFX_WARN: len = 0.3f; s = sinf(2 * PI * (t < 0.15f ? 880 : 660) * t) * 0.10f; break;
+  case SFX_STALL: len = 0.55f; v->ph += 2 * PI * (420.f * expf(-t * 2.6f) + 60.f) * dt; s = (sinf(v->ph) + 0.3f * sinf(v->ph * 2)) * fminf(1, t * 60) * expf(-t * 3.5f) * 0.32f; break;
   case SFX_DONE: len = 0.5f; v->ph += 2 * PI * NoteHz(t < 0.14f ? 79 : 84) * dt; s = sinf(v->ph) * expf(-fmodf(t, 0.14f) * 10) * 0.2f; break;
   }
   out += s;
@@ -281,12 +282,12 @@ static void AudioCB(void *buf, unsigned int frames) {
   float L, R;
   if (AU.nb > 1) { L = o[0] * 0.72f + o[1] * 0.28f; R = o[0] * 0.28f + o[1] * 0.72f; }
   else { L = R = o[0]; }
-  float mus = MusicRun() * mvol, fx = SfxRun() * AU.volume * 1.4f;
-  L = (L * 0.6f + common) * vol; R = (R * 0.6f + common) * vol;
+  float mus = MusicRun() * mvol, fx = SfxRun() * AU.volume * 2.2f;
+  L = (L * 1.25f + common * 1.8f) * vol; R = (R * 1.25f + common * 1.8f) * vol;
   SY.dcL = SY.dcL * 0.9995f + L * 0.0005f; L -= SY.dcL;
   SY.dcR = SY.dcR * 0.9995f + R * 0.0005f; R -= SY.dcR;
-  out[i * 2] = tanhf(L * 1.2f + mus + fx) * 0.85f;
-  out[i * 2 + 1] = tanhf(R * 1.2f + mus + fx) * 0.85f;
+  out[i * 2] = tanhf(L * 1.4f + mus + fx) * 0.97f;
+  out[i * 2 + 1] = tanhf(R * 1.4f + mus + fx) * 0.97f;
  }
 }
 

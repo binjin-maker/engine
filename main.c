@@ -20,7 +20,7 @@ static float gVisAng = 0, gTime = 0, gRoll = 0, gCrankT = 0, gPullAnim = 0;
 static char gWarn[16][96]; static int gWarnSev[16], gNWarn = 0;
 static int gAutotest = 0; static char gShotDir[256] = ".";
 static int gDiagShown = 0, gWasRunning = 0, gStartedOnce = 0;
-static float gVolume = 0.7f, gMusicVol = 0.6f; static int gMuted = 0, gMusicOn = 1;
+static float gVolume = 0.85f, gMusicVol = 0.6f; static int gMuted = 0, gMusicOn = 1;
 static char gDevBuf[8] = {0};
 
 static Font fR, fB;
@@ -31,12 +31,14 @@ static const Color COL_TXT = {232, 234, 238, 255}, COL_DIM = {140, 146, 158, 255
 static const Color COL_GRN = {90, 205, 115, 255}, COL_YEL = {240, 196, 60, 255}, COL_BLUE = {80, 160, 255, 255};
 
 // ===== toasts =====
+static int gToastQuiet = 0;
 typedef struct { char s[128]; float t; Color c; } Toast;
 static Toast gToast[6];
 static void ToastAdd(const char *s, Color c) {
  for (int i = 5; i > 0; i--) gToast[i] = gToast[i - 1];
  snprintf(gToast[0].s, 128, "%s", s); gToast[0].t = 4.5f; gToast[0].c = c;
- SfxPush(c.r == 240 && c.g == 196 ? SFX_ACH : (c.r == 235 && c.g == 70 ? SFX_WARN : SFX_POP));
+ if (!gToastQuiet) SfxPush(c.r == 235 && c.g == 70 ? SFX_WARN : SFX_POP);
+ gToastQuiet = 0;
 }
 
 // ===== saves + challenges =====
@@ -68,7 +70,7 @@ static void SaveRead(void) {
 static void Ach(int id) {
  if (gSave.ach & (1u << id)) return;
  gSave.ach |= 1u << id; SaveWrite();
- ToastAdd(TextFormat("CHALLENGE COMPLETE: %s", ACH_NAME[id]), COL_YEL);
+ gToastQuiet = 1; ToastAdd(TextFormat("CHALLENGE COMPLETE: %s", ACH_NAME[id]), COL_YEL); SfxPush(SFX_ACH);
 }
 static int AchCount(void) { int n = 0; for (int i = 0; i < NACH; i++) if (gSave.ach & (1u << i)) n++; return n; }
 
@@ -597,7 +599,7 @@ static void TestUpdate(float dt, int startHeld, int startPress) {
   if (!gStartedOnce) ToastAdd("IT'S ALIVE!", COL_GRN);
   gStartedOnce = 1;
  }
- if (gWasRunning && gM.rpm < 120 && !crank) { gWasRunning = 0; if (!gM.failed && gM.ign) ToastAdd("Stalled.", COL_YEL); }
+ if (gWasRunning && gM.rpm < 120 && !crank) { gWasRunning = 0; if (!gM.failed && gM.ign) { gToastQuiet = 1; ToastAdd("Stalled.", COL_YEL); SfxPush(SFX_STALL); } }
  if (gM.failed && !wasFailed) {
   AU.bang++; Ach(7);
   Vector3 c = LocalToWorld((Vector3){0, G.deck, 0});
@@ -968,7 +970,7 @@ static void AutoAudioTest(void) {
  double sum = 0; float peak = 0; int nan = 0;
  AU.running = 1; AU.q = 1; AU.volume = 0.7f;
  for (int blk = 0; blk < 60; blk++) {
-  AU.rpm = 800 + blk * 100.f; AU.load = blk < 30 ? 0.3f : 1.0f; AU.thr = AU.load; AU.spool = blk / 60.f;
+  AU.rpm = 800 + blk * 100.f; AU.load = blk < 30 ? 0.3f : 1.0f; AU.ncyl = 4; AU.vcylL = 0.5f; AU.fire[0] = 0; AU.fire[1] = 180; AU.fire[2] = 360; AU.fire[3] = 540; AU.gain[0] = AU.gain[1] = AU.gain[2] = AU.gain[3] = 1; AU.thr = AU.load; AU.spool = blk / 60.f;
   AudioCB(buf, 4096);
   for (int i = 0; i < 8192; i++) { if (isnan(buf[i])) nan++; sum += buf[i] * buf[i]; if (fabsf(buf[i]) > peak) peak = fabsf(buf[i]); }
   if (f) fwrite(buf, sizeof(float), 8192, f);
