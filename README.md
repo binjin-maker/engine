@@ -2,7 +2,7 @@
 
 Build an engine from parts, bolt it to the dyno stand, fire it up, and rev it. The engine is simulated live with synthesized sound. Every part changes the physics, and bad combos fail the way they would in real life.
 
-**Download:** [`bin/EngineGarage.exe`](bin/EngineGarage.exe). It's a single file with no installer, for Windows 10/11.
+**Download:** [`bin/EngineGarage.ex_`](bin/EngineGarage.ex_) — rename it to `EngineGarage.exe` after downloading. It is a single file with no installer, for Windows 10/11.
 
 ## What you can build
 - **Cycle:** 4-stroke or 2-stroke

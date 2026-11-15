@@ -5,4 +5,4 @@ set -e
 [ -f raylib/win/libraylib.a ] || (mkdir -p raylib/win && cd raylib/src && make PLATFORM=PLATFORM_DESKTOP OS=Windows_NT CC=x86_64-w64-mingw32-gcc AR=x86_64-w64-mingw32-ar RAYLIB_RELEASE_PATH=../win && make clean)
 python3 tools/embed_fonts.py
 x86_64-w64-mingw32-windres res.rc -O coff -o res.o
-x86_64-w64-mingw32-gcc -O2 -Iraylib/src main.c res.o raylib/win/libraylib.a -static -lopengl32 -lgdi32 -lwinmm -lm -mwindows -o bin/EngineGarage.exe
+x86_64-w64-mingw32-gcc -O2 -Iraylib/src main.c res.o raylib/win/libraylib.a -static -lopengl32 -lgdi32 -lwinmm -lm -mwindows -o bin/EngineGarage.exe && mv -f bin/EngineGarage.exe bin/EngineGarage.ex_
