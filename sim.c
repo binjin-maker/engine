@@ -4,10 +4,10 @@ static const FuelDef FUELS[] = {
  {"Gasoline 87",  11.0f, 1.00f, 0, 1.00f, "Cheap pump gas. Knocks above ~11:1 effective compression."},
  {"Gasoline 93",  12.2f, 1.01f, 0, 1.00f, "Premium pump gas. A bit more knock resistance."},
  {"Race Gas 110", 14.5f, 1.04f, 0, 0.90f, "Leaded race fuel. Lets you run big compression and boost."},
- {"E85",          15.0f, 1.07f, 0, 0.45f, "Ethanol blend. Huge knock resistance, more power. Hard cold starts."},
- {"Methanol",     16.0f, 1.13f, 0, 0.30f, "Alcohol race fuel. Runs cool, makes power. Very hard to cold start."},
+ {"E85",          15.0f, 1.07f, 0, 0.60f, "Ethanol blend. Huge knock resistance, more power. Hard cold starts."},
+ {"Methanol",     16.0f, 1.13f, 0, 0.45f, "Alcohol race fuel. Runs cool, makes power. Very hard to cold start."},
  {"Diesel",       99.0f, 1.00f, 1, 1.00f, "Compression ignition: needs 14:1+ compression and injection. Big torque, low rpm."},
- {"Nitromethane",  9.5f, 1.85f, 0, 0.30f, "Carries its own oxygen. Insane power, insane cylinder pressure. Knocks easily."},
+ {"Nitromethane",  9.5f, 1.85f, 0, 0.65f, "Carries its own oxygen. Insane power, insane cylinder pressure. Knocks easily."},
 };
 #define NFUEL 7
 static const char *LAYOUTS[] = {"Single","Inline","V 60","V 90","Boxer"};
@@ -16,13 +16,13 @@ static const int CYLOPT[5][8] = {{1},{2,3,4,5,6,8},{2,4,6,8,10,12,16},{2,4,6,8,1
 static const int CYLOPTN[5] = {1,6,7,7,5};
 static const float IMBAL[17] = {0,1.0f,0.7f,0.5f,0.35f,0.25f,0.08f,0,0.15f,0,0.12f,0,0.04f,0,0,0,0.04f};
 
-typedef struct { const char *name; float weight, str, cond, cost; Color col; const char *tip; } BlockDef;
+typedef struct { const char *name; float weight, str, cond, cost; Color col; const char *tip; float maxL, sizeK, heat; } BlockDef;
 static const BlockDef BLOCKS[] = {
- {"Cast Iron",      1.00f, 1.00f, 0.80f,  300, {78,80,86,255},    "Heavy and tough. Cheap. Holds heat."},
- {"Aluminum",       0.55f, 0.85f, 1.30f,  700, {176,180,186,255}, "Light, sheds heat well, weaker under big cylinder pressure."},
- {"CGI Iron",       0.90f, 1.40f, 0.75f, 1400, {62,68,84,255},    "Compacted graphite iron. Diesel-grade strength."},
- {"Magnesium",      0.40f, 0.65f, 1.20f, 1800, {182,172,138,255}, "Featherweight and fragile. Don't boost it hard."},
- {"Billet Aluminum",0.60f, 1.30f, 1.35f, 6000, {218,222,230,255}, "Machined from solid. Race-team money."},
+ {"Cast Iron",      1.00f, 1.00f, 0.80f,  320, {78,80,86,255},    "Heavy and tough. Cheap. Holds heat. Scales to any size.", 40, 0.12f, 0},
+ {"Cast Aluminum",  0.55f, 0.85f, 1.30f,  220, {176,180,186,255}, "Light, sheds heat well. Loses strength as engines get big; softens when hot.", 14, 0.22f, -6},
+ {"CGI Iron",       0.90f, 1.40f, 0.75f, 1400, {62,68,84,255},    "Compacted graphite iron. Diesel-grade strength that holds up at any size.", 40, 0.02f, 8},
+ {"Magnesium",      0.40f, 0.65f, 1.20f, 1800, {182,172,138,255}, "Featherweight and fragile. Creeps when hot. Unviable past ~2.5 L.", 2.5f, 0.38f, -28},
+ {"Billet Aluminum",0.60f, 1.30f, 1.35f, 6000, {218,222,230,255}, "Machined from solid. Strong but huge billets get pricey and limited (~10 L).", 10, 0.06f, -2},
 };
 #define NBLOCK 5
 typedef struct { const char *name; float ps, str, mass, cost; const char *tip; } IntDef;
@@ -33,18 +33,61 @@ static const IntDef INTERN[] = {
  {"Billet / Titanium",28.5f,1.55f, 0.70f, 4500, "Billet crank, titanium rods. ~28.5 m/s. Screams."},
 };
 #define NINT 4
-typedef struct { const char *name; float mul, cost; const char *tip; } FlyDef;
+typedef struct { const char *name; float mul, maxRpm, minL, maxL; int magneto, ring; float cost; const char *tip; } FlyDef;
 static const FlyDef FLY[] = {
- {"Lightweight",0.55f,250,"Revs fast, idles rough, stalls easier."},
- {"Standard",   1.00f,120,"Balanced."},
- {"Heavy",      1.80f,150,"Smooth idle, slow to rev. Easy to pull-start."},
+ {"Die-cast small-engine",  1.5f,  5200, 0.0f, 1.0f, 1, 0,  40, "Stock mower/kart flywheel with magneto. Cast aluminum: bursts past ~5200 rpm. Keep the governor."},
+ {"Billet small-engine",    1.0f, 12000, 0.0f, 1.0f, 1, 0, 160, "Billet aluminum with magneto, rated 12,000 rpm. The go-kart upgrade."},
+ {"Cast iron, ring gear",   1.0f,  7000, 0.6f, 99,   0, 1, 120, "Car flywheel with starter ring gear. Rated 7000 rpm. No magneto: ignition needs a battery."},
+ {"Light steel, ring gear", 0.6f,  9500, 0.6f, 99,   0, 1, 350, "Lightweight billet steel, ring gear, rated 9500 rpm."},
+ {"Aluminum race, ring gear",0.45f,12500,0.6f, 99,   0, 1, 900, "Race flywheel, steel insert, rated 12,500 rpm."},
+ {"Heavy dual-mass",        1.9f,  5000, 1.5f, 99,   0, 1, 450, "Big, smooth, diesel/truck flywheel. Rated 5000 rpm. Needs 1.5 L+."},
 };
+#define NFLY 6
+typedef struct { const char *name; int elec; float minL, maxL, power; int decomp, ring; float cost; const char *tip; } StarterDef;
+static const StarterDef STARTERS[] = {
+ {"Recoil, small",          0, 0,    0.20f, 9,    0, 0,  30, "Pull cord rated to 200 cc. Bigger engines snap the spring."},
+ {"Recoil, medium",         0, 0,    0.45f, 12,   0, 0,  45, "Pull cord rated to 450 cc."},
+ {"Recoil + decompressor",  0, 0,    1.00f, 13,   1, 0,  90, "Auto-decompressor bleeds compression while cranking. Rated to 1.0 L."},
+ {"Small electric 0.4 kW",  1, 0,    0.75f, 0.4f, 0, 0, 120, "Engages the small-engine flywheel. Rated to 750 cc. Needs a small-engine flywheel."},
+ {"Auto starter 1.2 kW",    1, 0.8f, 4.5f,  1.2f, 0, 1, 160, "Car starter for 0.8-4.5 L. Needs a ring-gear flywheel."},
+ {"Gear-reduction 2.0 kW",  1, 2.0f, 8.0f,  2.0f, 0, 1, 260, "High-torque starter for 2-8 L. Needs a ring-gear flywheel."},
+ {"Heavy-duty 4.5 kW",      1, 4.0f, 16.f,  4.5f, 0, 1, 480, "Truck/diesel starter for 4-16 L. Needs a ring-gear flywheel."},
+};
+#define NSTART 7
+typedef struct { const char *name; float amps, minL; int stator; float cost; const char *tip; } AltDef;
+static const AltDef ALTS[] = {
+ {"None",                  0,   0,    0,   0, "No charging. Magneto still makes spark on small-engine flywheels."},
+ {"Lighting coil 3 A",     3,   0,    1,  25, "Tiny coil under the flywheel. Barely runs a light. Needs a magneto flywheel."},
+ {"Charging stator 15 A",  15,  0,    1,  90, "Motorcycle-style stator + regulator. Needs a magneto flywheel."},
+ {"Alternator 70 A",       70,  0.6f, 0, 160, "Belt-driven car alternator. Needs 0.6 L+ to mount."},
+ {"High-output 160 A",     160, 1.0f, 0, 320, "Big alternator for heavy electrical loads (DI, fans, pumps)."},
+};
+#define NALT 5
+typedef struct { const char *name; float cfm, cost; } CarbDef;
+static const CarbDef CARBS[] = {
+ {"16 mm small-engine", 10, 25}, {"Mikuni VM22", 20, 60}, {"Mikuni VM34", 85, 120}, {"Solex 34 PICT", 140, 150}, {"Dual Weber 40 DCOE", 250, 700},
+ {"Holley 390 cfm", 390, 350}, {"Holley 600 cfm", 600, 450}, {"Holley 850 cfm", 850, 600}, {"Dual-quad 2x850", 1700, 1400},
+};
+#define NCARB 9
+typedef struct { const char *name; float lbhr, cost; } InjDef;
+static const InjDef INJ[] = {
+ {"19 lb/hr", 19, 30}, {"24 lb/hr", 24, 35}, {"30 lb/hr", 30, 45}, {"42 lb/hr", 42, 60}, {"60 lb/hr", 60, 80},
+ {"80 lb/hr", 80, 110}, {"120 lb/hr", 120, 160}, {"220 lb/hr", 220, 260}, {"600 lb/hr nitro", 600, 600},
+};
+#define NINJ 9
+static const char *LUBES[] = {"Splash (dipper)", "Wet sump + pump", "Dry sump"};
+static const char *LUBE_TIP[] = {
+ "A dipper on the rod splashes oil around. Dirt cheap; only feeds small engines, and only while the oil stays under the crank (tilt kills it).",
+ "Pump pulls oil from the pan through galleries to bearings and heads, then it drains back by gravity. Laid-over cylinders drain badly.",
+ "Scavenge pumps empty the pan into a remote tank; a pressure pump feeds the engine. Works at any angle and under hard g-loads. Pricey."};
+static const char *GOVS[] = {"None", "Governor 3600 rpm", "Governor 4500 rpm", "Rev limiter"};
+static const float BSFC[] = {0.5f, 0.5f, 0.5f, 0.68f, 1.0f, 0.4f, 2.6f};
 typedef struct { const char *name; float flt, rpk, ve, hgt, cost; const char *tip; } VT4Def;
 static const VT4Def VT4[] = {
- {"Flathead",    4300, 2600, 0.74f, 0.35f, 100, "Valves in the block. Simple, low-revving, weak breathing."},
- {"OHV Pushrod", 6600, 4300, 0.88f, 0.55f, 300, "Cam in block, pushrods. Compact, torquey, floats valves early."},
- {"SOHC",        8200, 5000, 0.92f, 0.70f, 600, "Single overhead cam. Revs well."},
- {"DOHC",        9800, 5600, 0.96f, 0.85f, 1100,"Twin overhead cams. Best breathing, highest revs."},
+ {"Flathead",    4200, 2400, 0.62f, 0.35f, 100, "Valves in the block. Simple, low-revving, weak breathing."},
+ {"OHV Pushrod", 6500, 4300, 0.86f, 0.55f, 300, "Cam in block, pushrods. Compact, torquey, floats valves early."},
+ {"SOHC",        7400, 5000, 0.87f, 0.70f, 600, "Single overhead cam. Revs well."},
+ {"DOHC",        8400, 5600, 0.96f, 0.85f, 1100,"Twin overhead cams. Best breathing, highest revs."},
 };
 typedef struct { const char *name; float rpk, ve, cost; const char *tip; } VT2Def;
 static const VT2Def VT2[] = {
@@ -53,13 +96,13 @@ static const VT2Def VT2[] = {
  {"Rotary Valve",7800, 0.90f, 400, "Rotary disc valve. Peaky, high-revving."},
 };
 typedef struct { int n; float rpk, ve, flt, cost; } ValveDef;
-static const ValveDef VALVES[] = {{2,0.95f,-0.03f,0,0},{3,1.0f,0.0f,200,150},{4,1.06f,0.03f,600,300},{5,1.08f,0.035f,700,500}};
+static const ValveDef VALVES[] = {{2,0.95f,-0.04f,0,0},{3,1.0f,0.0f,200,150},{4,1.06f,0.04f,600,300},{5,1.08f,0.045f,700,500}};
 typedef struct { const char *name, *name2; float rpk, width, ve, idle, flt, rough, cost; const char *tip; } CamDef;
 static const CamDef CAMS[] = {
- {"Economy","Torque ports",0.75f,1.25f,0.97f,0,  -300,0.00f, 80,"Low-rpm torque, smooth idle."},
+ {"Economy","Torque ports",0.70f,1.25f,0.93f,0,  -300,0.00f, 80,"Low-rpm torque, smooth idle."},
  {"Street", "Mild ports",  1.00f,1.00f,1.00f,0,   0,  0.02f,120,"All-rounder."},
  {"Sport",  "Sport ports", 1.18f,0.90f,1.03f,150, 300,0.08f,250,"Pulls harder up top, a little lumpy."},
- {"Race",   "Race ports",  1.40f,0.75f,1.06f,400, 700,0.28f,500,"Peaky top end, loping idle, weak bottom end."},
+ {"Race",   "Race ports",  1.40f,0.75f,1.06f,400, 1100,0.28f,500,"Peaky top end, loping idle, weak bottom end."},
 };
 typedef struct { const char *name; float flow, lag; int elec; float knock, cost; const char *tip; } DelDef;
 static const DelDef DELIV[] = {
@@ -119,24 +162,29 @@ typedef struct {
  int cooling, exhaust, starter, alternator, oil; float mix;
  char name[32];
  float tilt;
+ int carb, inj, gov;
+ int lube; float oilL; int oilCooler;
 } Build;
 
 static const Build PRESETS[] = {
- {0,0,0,1, 64,50,8.5f, 1,0,2, 1,0,0, 0,2,0,0,0, 0,0,0,0,2,50, "Push Mower 160cc"},
- {1,1,0,1, 66.4f,72,9.0f, 1,2,0, 1,0,3, 0,2,0,0,0, 1,3,0,0,1,40, "Dirt Bike 250 2T"},
- {0,1,1,4, 86,86,9.5f, 1,2,1, 3,2,2, 3,3,1,15,1, 2,1,1,1,1,50, "Hot Hatch 2.0T"},
- {0,1,3,8, 103.25f,92,10.5f, 0,1,1, 1,0,2, 2,1,0,0,0, 2,1,1,1,2,50, "Muscle V8 6.2"},
- {0,5,1,6, 107,124,17.3f, 2,2,2, 1,2,0, 3,1,2,26,1, 2,0,1,1,3,50, "Diesel Truck 6.7"},
- {0,1,2,12, 95,76.4f,12.5f, 1,2,0, 3,2,3, 3,3,0,0,0, 2,2,1,1,0,50, "V12 Exotic 6.5"},
- {0,1,4,4, 85.5f,69,8.5f, 3,0,1, 1,0,1, 0,1,0,0,0, 0,0,1,1,4,50, "Air-cooled Flat-4"},
- {0,6,3,8, 106.4f,114.3f,6.0f, 4,3,0, 1,0,3, 4,0,4,14,0, 2,2,1,0,4,50, "Nitro Dragster"},
+ {0,0,0,1, 64,50,8.5f, 1,0,0, 1,0,0, 0,2,0,0,0, 0,0,0,0,2,50, "Push Mower 160cc", 0, 0,0,1, 0,0.6f,0},
+ {1,1,0,1, 66.4f,72,9.0f, 1,2,1, 1,0,3, 0,2,0,0,0, 1,3,1,0,1,40, "Dirt Bike 250 2T", 0, 2,0,3, 0,0,0},
+ {0,1,1,4, 86,86,9.5f, 1,2,3, 3,2,2, 3,3,1,15,1, 2,1,4,3,1,50, "Hot Hatch 2.0T", 0, 6,4,3, 1,5.0f,1},
+ {0,1,3,8, 103.25f,92,10.5f, 0,1,2, 1,0,2, 2,1,0,0,0, 2,1,5,3,2,50, "Muscle V8 6.2", 0, 6,3,3, 1,5.7f,0},
+ {0,5,1,6, 107,124,17.3f, 2,2,5, 1,2,0, 3,1,2,26,1, 2,0,6,4,3,50, "Diesel Truck 6.7", 0, 6,4,3, 1,11.5f,1},
+ {0,1,2,12, 95,76.4f,12.5f, 1,2,4, 3,2,3, 3,3,0,0,0, 2,2,5,4,0,50, "V12 Exotic 6.5", 0, 6,4,3, 2,10.f,1},
+ {0,1,4,4, 85.5f,69,8.5f, 3,0,2, 1,0,1, 0,1,0,0,0, 0,0,4,3,4,50, "Air-cooled Flat-4", 0, 3,0,3, 1,2.5f,1},
+ {0,6,3,8, 106.4f,114.3f,6.0f, 4,3,4, 1,0,3, 4,0,4,14,0, 2,2,6,0,4,50, "Nitro Dragster", 0, 6,8,3, 2,14.f,0},
+ {0,0,0,1, 70,54,8.5f, 1,0,1, 1,0,0, 0,1,0,0,0, 0,0,1,0,2,50, "Buggy 212cc", 15, 1,0,0, 0,0.6f,0},
 };
-#define NPRESET 8
+#define NPRESET 9
 
 typedef struct {
  float vcylL, dispL, disp, rpk, veMax, wLo, wHi, floatRpm, pistonRpm, dieselRpm, redline, inertia;
  float imepPk, fric, pLimit, coolCap, danger, heatC, stall, compDrag, idle, weight, cost, lube;
- int hasBatt, needsElec, limitBy;
+ int hasBatt, needsElec, limitBy, magneto, ninj;
+ float oilNeed, oilMax, oilHeadCap, drainK;
+ float blockEff, intEff, govRpm, topRpm, injHp, needCfm, demandA, mfgOne, mfgK, decomp, uncappedHp;
  float estHp, estHpRpm, estTq, estTqRpm, estImep;
  int npts; float crpm[160], chp[160], ctq[160];
 } Spec;
@@ -160,12 +208,16 @@ static float SpoolTarget(const Build *b, const Spec *s, float rpm, float af) {
  const ForcedDef *fd = &FORCED[b->forced];
  float flow = s->dispL * rpm / 1000.f * (b->cycle ? 2.f : 1.f) * (0.2f + 0.8f * af);
  float t = Smooth01((flow - 0.35f * fd->full) / (0.65f * fd->full));
- float ch = flow - 2.4f * fd->full;
+ float ch = flow - 2.0f * fd->full;
  if (ch > 0) { float y = ch / fd->full; t /= (1 + y * y); }
  return t;
 }
 
-typedef struct { float tind, tfric, tpar, imep, af, knock, dens; } TqOut;
+static float CfmNeed(const Build *b, const Spec *s, float rpm, float ve, float dens) {
+ return s->dispL * rpm * ve * (b->cycle ? 1.8f : 0.5f) * 0.0353f * dens;
+}
+
+typedef struct { float tind, tfric, tpar, imep, af, knock, dens, lean; } TqOut;
 
 static TqOut EvalTorque(const Build *b, const Spec *s, float rpm, float thr, float boost, float q, float temp, int charging) {
  TqOut o = {0};
@@ -174,8 +226,12 @@ static TqOut EvalTorque(const Build *b, const Spec *s, float rpm, float thr, flo
  float ref = 0.5f * s->rpk;
  float af = f->diesel ? 1.0f : a / (a + (1 - a) * rpm / ref + 1e-4f);
  float PR = 1 + boost / 14.7f;
- float dens = powf(PR, b->intercooler ? 0.93f : 0.75f);
+ float dens = powf(PR, b->intercooler ? 0.84f : 0.68f);
  float ve = VE(b, s, rpm);
+ if (b->delivery == 0 && !f->diesel) {
+  float need = CfmNeed(b, s, rpm, ve * af, dens), cfm = CARBS[b->carb].cfm;
+  ve *= 1.f / powf(1 + powf(need / cfm, 4), 0.25f) * (need > 1e-3f ? 1 : 1);
+ }
  float load = f->diesel ? (rpm < 450 ? fmaxf(a, 0.4f) : a) : af;
  float imep = s->imepPk * ve * load * dens;
  if (!f->diesel) {
@@ -183,18 +239,82 @@ static TqOut EvalTorque(const Build *b, const Spec *s, float rpm, float thr, flo
   float ex = eff - f->knock;
   if (ex > 0) { o.knock = ex * powf(af, 1.5f); imep /= (1 + 0.08f * o.knock); }
  }
+ float cyc = b->cycle ? 2 * PI : 4 * PI;
+ if (b->delivery > 0 && s->injHp > 0) {
+  float hpReq = imep * 1e5f * s->disp / cyc * rpm / 7121.f;
+  if (hpReq > s->injHp) { o.lean = hpReq / s->injHp; imep /= o.lean; }
+ }
  imep *= q;
  float k = rpm / 1000.f;
  float fmep = (0.6f + 0.09f * k + 0.025f * k * k) * s->fric * sqrtf(b->stroke / 86.f);
  if (b->cycle == 1) fmep *= 0.7f;
  if (!f->diesel) fmep += (1 - af) * 0.9f;
- float cyc = b->cycle ? 2 * PI : 4 * PI;
  o.tind = imep * 1e5f * s->disp / cyc;
  o.tfric = fmep * 1e5f * s->disp / (4 * PI);
- o.tpar = b->alternator ? (0.8f + (charging ? 1.5f : 0)) : 0;
+ o.tpar = b->alternator >= 3 ? (0.8f + (charging ? 1.5f : 0)) * (b->alternator == 4 ? 1.6f : 1.f) : (b->alternator ? 0.15f : 0);
  if (b->forced == 4) o.tpar += 0.15f * o.tind * (1 - 1 / PR);
  o.imep = imep; o.af = af; o.dens = dens;
  return o;
+}
+
+// part status: 0 ok, 1 marginal, 2 under-rated (fails in use), 3 doesn't fit
+enum { P_BLOCK, P_FLY, P_START, P_ALT, P_CARB, P_INJ, P_TURBO, P_LUBE, P_N };
+static int PartStatus(const Build *b, const Spec *s, int cat, char *why, int n) {
+ why[0] = 0;
+ switch (cat) {
+ case P_BLOCK: {
+  const BlockDef *bd = &BLOCKS[b->block];
+  if (s->dispL > bd->maxL) { snprintf(why, n, "%s is unviable at %.1f L (max ~%.1f L): too weak at that size.", bd->name, s->dispL, bd->maxL); return 3; }
+  if (s->blockEff < bd->str * 0.75f) { snprintf(why, n, "Big casting: strength down to %.0f%% of a small one.", 100 * s->blockEff / bd->str); return 1; }
+  return 0; }
+ case P_FLY: {
+  const FlyDef *f = &FLY[b->flywheel];
+  if (s->dispL > f->maxL) { snprintf(why, n, "Small-engine flywheel won't fit a %.1f L crank.", s->dispL); return 3; }
+  if (s->dispL < f->minL) { snprintf(why, n, "Too big for a %.2f L engine; needs %.1f L+.", s->dispL, f->minL); return 3; }
+  if (s->topRpm > f->maxRpm) { snprintf(why, n, "Rated %.0f rpm, engine can spin %.0f. It will burst.", f->maxRpm, s->topRpm); return 2; }
+  if (s->topRpm > f->maxRpm * 0.92f) { snprintf(why, n, "Rated %.0f rpm: close to the edge.", f->maxRpm); return 1; }
+  snprintf(why, n, "Rated %.0f rpm.", f->maxRpm); return 0; }
+ case P_START: {
+  const StarterDef *st = &STARTERS[b->starter];
+  if (st->ring && !FLY[b->flywheel].ring) { snprintf(why, n, "Needs a ring-gear flywheel to engage."); return 3; }
+  if (st->elec && !st->ring && !FLY[b->flywheel].magneto) { snprintf(why, n, "Engages small-engine flywheels only."); return 3; }
+  if (st->minL > 0 && s->dispL < st->minL * 0.5f) { snprintf(why, n, "Too big to mount on a %.2f L engine.", s->dispL); return 3; }
+  if (s->dispL > st->maxL) { snprintf(why, n, st->elec ? "Rated %.2f L. On %.2f L it'll overheat and burn out." : "Rated %.2f L. On %.2f L the spring/rope will snap.", st->maxL, s->dispL); return 2; }
+  if (s->dispL > st->maxL * 0.85f) { snprintf(why, n, "Near its %.2f L rating.", st->maxL); return 1; }
+  snprintf(why, n, "Rated to %.2f L.", st->maxL); return 0; }
+ case P_ALT: {
+  const AltDef *al = &ALTS[b->alternator];
+  if (al->stator && !FLY[b->flywheel].magneto) { snprintf(why, n, "Stators live under a small-engine flywheel."); return 3; }
+  if (s->dispL < al->minL) { snprintf(why, n, "No room to mount on a %.2f L engine.", s->dispL); return 3; }
+  if (s->demandA > al->amps + 0.01f && (s->hasBatt || s->needsElec)) { snprintf(why, n, "Load is %.0f A, makes %.0f A. Battery will drain.", s->demandA, al->amps); return 2; }
+  snprintf(why, n, "Load %.0f A of %.0f A.", s->demandA, al->amps); return 0; }
+ case P_CARB: {
+  if (b->delivery != 0) return 0;
+  float cfm = CARBS[b->carb].cfm;
+  if (s->needCfm > cfm * 1.15f) { snprintf(why, n, "Engine wants %.0f cfm, carb flows %.0f: chokes the top end.", s->needCfm, cfm); return 1; }
+  if (cfm > s->needCfm * 2.2f) { snprintf(why, n, "Too big (%.0f cfm vs %.0f needed): stumbles and floods at low rpm.", cfm, s->needCfm); return 1; }
+  snprintf(why, n, "%.0f cfm for a %.0f cfm engine.", cfm, s->needCfm); return 0; }
+ case P_INJ: {
+  if (b->delivery == 0) return 0;
+  float uncapped = s->uncappedHp;
+  if (FUELS[b->fuel].diesel) { if (s->injHp < uncapped * 0.98f) { snprintf(why, n, "Fuel-limited to ~%.0f hp.", s->injHp); return 1; } }
+  else if (s->injHp < uncapped * 0.98f) { snprintf(why, n, "Supports ~%.0f hp on %s: will run LEAN and melt pistons.", s->injHp, FUELS[b->fuel].name); return 2; }
+  snprintf(why, n, "Supports ~%.0f hp.", s->injHp); return 0; }
+ case P_LUBE: {
+  if (b->cycle) { snprintf(why, n, "2-strokes are oiled by the fuel mix."); return 0; }
+  float tl = fabsf(b->tilt);
+  if (b->lube == 0 && (s->dispL > 0.8f || b->cyl > 2)) { snprintf(why, n, "Splash can't feed a %.1f L %d-cyl: bearings starve at speed.", s->dispL, b->cyl); return 2; }
+  if (b->lube == 0 && tl > 25) { snprintf(why, n, "Tilted %.0f deg: the dipper can't reach the oil.", tl); return 2; }
+  if (b->lube == 1 && tl > 50) { snprintf(why, n, "Tilted %.0f deg: oil pools in the heads, pan runs dry. Dry sump it.", tl); return 2; }
+  if (b->oilL < s->oilNeed) { snprintf(why, n, "%.1f L is too little (needs %.1f L): pickup sucks air.", b->oilL, s->oilNeed); return 2; }
+  if (b->oilL > s->oilMax) { snprintf(why, n, "Overfilled: the crank whips the oil into froth."); return 1; }
+  if (b->lube == 1 && tl > 35) { snprintf(why, n, "Tilted %.0f deg: slow drain-back, keep it topped up.", tl); return 1; }
+  snprintf(why, n, "Needs %.1f L, has %.1f L.", s->oilNeed, b->oilL); return 0; }
+ case P_TURBO:
+  if (b->forced && b->boost > FORCED[b->forced].maxb) { snprintf(why, n, "%.0f psi is past its %.0f psi limit.", b->boost, FORCED[b->forced].maxb); return 2; }
+  return 0;
+ }
+ return 0;
 }
 
 static void ComputeSpec(const Build *b, Spec *s) {
@@ -210,50 +330,121 @@ static void ComputeSpec(const Build *b, Spec *s) {
  } else {
   const VT4Def *v = &VT4[b->valvetrain];
   int nv = b->valvetrain == 0 ? 0 : b->valves;
-  s->rpk = v->rpk * VALVES[nv].rpk * CAMS[b->cam].rpk * powf(80.f / b->stroke, 0.35f) * powf(0.5f / s->vcylL, 0.12f);
+  s->rpk = v->rpk * VALVES[nv].rpk * CAMS[b->cam].rpk * powf(80.f / b->stroke, 0.35f) * powf(0.5f / s->vcylL, 0.05f);
   s->veMax = v->ve + VALVES[nv].ve;
   s->floatRpm = (v->flt + VALVES[nv].flt + CAMS[b->cam].flt) * powf(86.f / b->bore, 0.25f);
  }
  if (f->diesel) s->rpk *= 0.6f;
+ s->veMax *= Clampf(powf(s->vcylL / (two ? 0.3f : 0.6f), 0.17f), 0.5f, 1.04f);
  s->veMax *= CAMS[b->cam].ve * FILTERS[b->filter].flow * DELIV[b->delivery].flow * (two ? EXH[b->exhaust].flow2 : EXH[b->exhaust].flow4);
  s->wLo = s->rpk * 0.9f * CAMS[b->cam].width; s->wHi = s->rpk * 1.35f * CAMS[b->cam].width;
  if (two) { s->wLo *= 0.8f; s->wHi *= 0.6f; }
- s->pistonRpm = INTERN[b->internals].ps * 60.f / (2.f * b->stroke * 1e-3f);
+ {
+  float mp = powf(b->bore / 86.f, 3.f) * INTERN[b->internals].mass;
+  s->pistonRpm = 9400.f * sqrtf(INTERN[b->internals].str / (mp * (b->stroke / 86.f)));
+ }
  s->dieselRpm = f->diesel ? 4600 * powf(90.f / b->bore, 0.35f) : 1e9f;
  float lim = s->pistonRpm; s->limitBy = 0;
  if (s->floatRpm < lim) { lim = s->floatRpm; s->limitBy = 1; }
  if (s->dieselRpm * 1.05f < lim) { lim = s->dieselRpm * 1.05f; s->limitBy = 2; }
  s->redline = floorf(lim * 0.95f / 100.f) * 100.f;
+ s->govRpm = b->gov == 1 ? 3600 : (b->gov == 2 ? 4500 : 0);
+ s->topRpm = s->govRpm > 0 ? s->govRpm * 1.06f : (b->gov == 3 ? s->redline * 1.01f : s->redline * 1.12f);
  s->inertia = (0.012f + 0.075f * s->dispL * INTERN[b->internals].mass) * FLY[b->flywheel].mul + 0.004f * b->cyl;
  float th = (1 - powf(b->cr, -0.28f)) / (1 - powf(10, -0.28f));
- s->imepPk = (two ? 10.5f : (f->diesel ? 11.5f : 14.5f)) * th * f->energy;
+ s->imepPk = (two ? 12.0f : (f->diesel ? 9.6f : 14.0f)) * th * f->energy;
  s->fric = two ? 0.9f : OILS[b->oil].fric;
- s->pLimit = 27.f * BLOCKS[b->block].str * INTERN[b->internals].str;
+ {
+  const BlockDef *bd = &BLOCKS[b->block];
+  s->blockEff = bd->str * Clampf(powf(fmaxf(s->dispL, 0.05f) / 1.5f, -bd->sizeK), 0.2f, 1.25f);
+  if (s->dispL > bd->maxL) s->blockEff *= 0.4f;
+  float ik = 0.12f * (1.6f - INTERN[b->internals].str);
+  s->intEff = INTERN[b->internals].str * Clampf(powf(fmaxf(s->vcylL, 0.02f) / 0.5f, -ik), 0.5f, 1.2f);
+  float crPen = Clampf((b->cr - (bd->str < 0.9f ? 11.f : 14.f)) * 0.04f, 0, 0.4f);
+  s->pLimit = 27.f * s->blockEff * s->intEff * (1 - crPen);
+ }
  s->coolCap = COOL[b->cooling].cap * powf(s->dispL, 0.85f) * (b->cooling == 0 ? BLOCKS[b->block].cond : 1.f);
- s->danger = COOL[b->cooling].danger + (two ? 0 : OILS[b->oil].hot);
+ s->danger = COOL[b->cooling].danger + (two ? 0 : OILS[b->oil].hot) + BLOCKS[b->block].heat * (b->cooling == 0 ? 1.6f : 1.f);
  s->heatC = (9000 * s->dispL + 3000) * (b->cooling ? 1.6f : 1.f);
- s->stall = 30 + s->dispL * b->cr * 5.f;
+ const StarterDef *st = &STARTERS[b->starter];
+ s->stall = st->elec ? 150.f * st->power : st->power;
+ s->decomp = st->decomp ? 0.45f : 1.f;
  s->compDrag = s->dispL * b->cr * 2.0f * (two ? 0.7f : OILS[b->oil].cold);
- s->hasBatt = b->starter == 1 || b->alternator;
+ s->magneto = FLY[b->flywheel].magneto;
+ s->hasBatt = st->elec || b->alternator >= 2;
  s->needsElec = DELIV[b->delivery].elec;
+ s->ninj = b->delivery == 1 ? 2 : b->cyl;
+ s->demandA = (s->magneto ? 0 : 1 + 0.4f * b->cyl) + (b->cooling == 1 ? 8 : (b->cooling == 2 ? 15 : 0));
+ if (s->needsElec) s->demandA += 6 + (b->delivery == 3 ? (f->diesel ? 15 : 10) + 2 * b->cyl : (b->delivery == 1 ? 4 : 3 + 1.f * b->cyl));
+ s->injHp = b->delivery > 0 ? s->ninj * INJ[b->inj].lbhr * 0.85f / BSFC[b->fuel] : 0;
+ s->oilNeed = (0.25f + 0.55f * powf(s->dispL, 0.9f)) * (b->lube == 2 ? 1.3f : 1.f);
+ s->oilMax = s->oilNeed * 4.f + 1.f;
+ s->oilHeadCap = 0.15f + 0.3f * s->dispL;
+ {
+  float tl = fabsf(b->tilt);
+  s->drainK = b->lube == 2 ? 3.0f : 1.6f * (1 - Smooth01((tl - 25) / 60.f)) + 0.04f;
+ }
  s->idle = two ? 1500 : (f->diesel ? 750 : 750 + CAMS[b->cam].idle);
  s->lube = two ? (b->mix < 1 ? 0 : 50.f / b->mix) : 1;
+ {
+  float topNeed = s->redline;
+  float spT = SpoolTarget(b, s, topNeed, 1);
+  float dens = powf(1 + b->boost * spT / 14.7f, b->intercooler ? 0.84f : 0.68f);
+  s->needCfm = CfmNeed(b, s, topNeed, VE(b, s, topNeed), dens);
+ }
  int nb = (b->layout >= 2) ? 2 : 1;
+ float L = s->dispL;
  float vtw = two ? 0.5f : (b->valvetrain == 0 ? 0.7f : (b->valvetrain == 1 ? 0.9f : (b->valvetrain == 2 ? 1.0f : 1.15f)));
- s->weight = (14 + 32 * s->dispL + 3 * b->cyl) * BLOCKS[b->block].weight
-  + (5 + 8 * s->dispL) * vtw * nb * 0.7f + (2 + 7 * s->dispL) * INTERN[b->internals].mass
-  + (2 + 5 * powf(s->dispL, 0.7f)) * FLY[b->flywheel].mul
-  + (b->forced == 3 ? 18 : (b->forced == 4 ? 20 : (b->forced ? 9 : 0))) + (b->forced && b->intercooler ? 6 : 0)
-  + (b->alternator ? 6 : 0) + (b->starter ? 6 : 1.5f) + (b->cooling == 1 ? 12 : (b->cooling == 2 ? 20 : 0))
-  + 3 + 4 * s->dispL + (two ? 0 : 3 + 1.5f * s->dispL);
- s->cost = 400 + 250 * s->dispL + 120 * b->cyl;
- s->cost += BLOCKS[b->block].cost * (0.5f + s->dispL * 0.5f) + INTERN[b->internals].cost * (0.4f + b->cyl * 0.15f) + FLY[b->flywheel].cost;
- s->cost += two ? VT2[b->valvetrain].cost : (VT4[b->valvetrain].cost * nb + VALVES[b->valvetrain ? b->valves : 0].cost * b->cyl * 0.25f);
- s->cost += CAMS[b->cam].cost * nb + DELIV[b->delivery].cost * (b->delivery >= 2 ? 0.4f + 0.15f * b->cyl : 1) + FILTERS[b->filter].cost;
- s->cost += FORCED[b->forced].cost + (b->forced && b->intercooler ? 450 : 0) + COOL[b->cooling].cost + EXH[b->exhaust].cost;
- s->cost += (b->starter ? 180 : 40) + (b->alternator ? 160 : 0) + (b->fuel == 6 ? 900 : 0);
+ float blockKg = (3 + 22 * powf(L, 0.85f) + 1.2f * b->cyl) * BLOCKS[b->block].weight;
+ float headKg = (1.5f + 4 * L) * vtw * nb * 0.7f * (BLOCKS[b->block].weight < 0.7f ? 0.8f : 1.f);
+ float intKg = (0.8f + 5 * L) * INTERN[b->internals].mass;
+ float flyKg = (1 + 5 * powf(L, 0.7f)) * FLY[b->flywheel].mul * 0.8f;
+ float accKg = (b->forced == 3 ? 18 : (b->forced == 4 ? 20 : (b->forced ? 9 : 0))) + (b->forced && b->intercooler ? 6 : 0)
+  + (b->alternator >= 3 ? 6 : (b->alternator ? 1 : 0)) + (st->elec ? 1 + 2.5f * st->power : 0.8f) + (b->cooling == 1 ? 8 + 4 * L : (b->cooling == 2 ? 12 + 6 * L : 0))
+  + 1 + 3 * L + (two ? 0 : 0.5f + 1.5f * L);
+ s->weight = blockKg + headKg + intKg + flyKg + accKg;
+ // cost: materials + machining + bought parts (catalog prices are retail; volume buys at ~35%)
+ static const float MATKG[] = {1.3f, 2.5f, 2.0f, 8.f, 6.f};
+ static const float MACH[] = {1.0f, 0.75f, 1.3f, 1.4f, 5.0f};
+ static const float INTC[] = {30, 70, 300, 1100};
+ static const float CAMC[] = {0, 0, 150, 400};
+ static const float VTC[] = {0, 15, 80, 200};
+ static const float ECU[] = {0, 250, 400, 1200, 600};
+ float matl = blockKg * MATKG[b->block] + headKg * (BLOCKS[b->block].weight < 0.7f ? 3.0f : 1.5f) + (s->weight - blockKg - headKg) * 1.8f;
+ float hours = (0.4f + 0.25f * b->cyl + 0.4f * nb * vtw + 0.6f * L) * MACH[b->block] + (b->block == 4 ? 4 + 3 * L : 0);
+ float sz = Clampf(sqrtf(L / 2.f), 0.15f, 1.6f);
+ float bought = INTC[b->internals] * (0.2f + s->vcylL * 1.6f) * b->cyl
+  + (two ? VT2[b->valvetrain].cost * 0.3f : VTC[b->valvetrain] * nb * (0.3f + 0.3f * L) + VALVES[b->valvetrain ? b->valves : 0].cost * b->cyl * 0.1f)
+  + CAMC[b->cam] * nb * (0.3f + 0.15f * L)
+  + (b->delivery == 0 ? CARBS[b->carb].cost : INJ[b->inj].cost * s->ninj + ECU[b->delivery] * (0.5f + 0.1f * b->cyl))
+  + FILTERS[b->filter].cost * (0.3f + 0.35f * sqrtf(L)) + FORCED[b->forced].cost * Clampf(sqrtf(L / 2.f), 0.4f, 1.6f) + (b->forced && b->intercooler ? 450 * sz : 0)
+  + COOL[b->cooling].cost * (0.3f + 0.35f * L) + EXH[b->exhaust].cost * (0.05f + 0.6f * sz)
+  + st->cost + ALTS[b->alternator].cost + FLY[b->flywheel].cost + (b->gov == 3 ? 60 : (b->gov ? 12 : 0)) + (b->fuel == 6 ? 300 : 0)
+  + (two ? 0 : (b->lube == 0 ? 1 : (b->lube == 1 ? 25 + 15 * L : 900 + 200 * L))) + (b->oilCooler ? 80 + 40 * L : 0);
+ s->mfgOne = matl * 1.6f + hours * 95.f + bought + 200;
+ s->mfgK = matl * 0.85f + hours * 0.12f * 40.f + bought * 0.25f + 4 + 3 * b->cyl;
+ s->cost = s->mfgK * 1.7f;
+ // breathing: redline sits a bit past where power falls off, never above the mechanical limit
+ {
+  float pk = 0, pkR = 0, mech = s->redline;
+  for (int i = 0; i < 120; i++) {
+   float rpm = 1000 + (mech - 1000) * i / 119.f;
+   TqOut t = EvalTorque(b, s, rpm, 1, b->boost * SpoolTarget(b, s, rpm, 1), 1, 90, 1);
+   float hp = (t.tind - t.tfric - t.tpar) * rpm;
+   if (hp > pk) { pk = hp; pkR = rpm; }
+  }
+  float fall = mech;
+  for (int i = 0; i < 120; i++) {
+   float rpm = pkR + (mech - pkR) * i / 119.f;
+   TqOut t = EvalTorque(b, s, rpm, 1, b->boost * SpoolTarget(b, s, rpm, 1), 1, 90, 1);
+   if ((t.tind - t.tfric - t.tpar) * rpm < pk * 0.82f) { fall = rpm; break; }
+  }
+  float br = floorf(fminf(fmaxf(fall, pkR * 1.05f), pkR * 1.14f) / 100.f) * 100.f;
+  if (br < s->redline) { s->redline = br; s->limitBy = 3; }
+  s->topRpm = s->govRpm > 0 ? s->govRpm * 1.06f : (b->gov == 3 ? s->redline * 1.01f : s->redline * 1.12f);
+ }
  // dyno estimate
- float top = fmaxf(s->redline * 1.0f, 2000);
+ float top = fmaxf(s->govRpm > 0 ? s->govRpm : s->redline, 2000);
  float lo = fminf(s->idle, 800);
  s->npts = 0;
  for (int i = 0; i < 160; i++) {
@@ -267,18 +458,40 @@ static void ComputeSpec(const Build *b, Spec *s) {
   if (t.imep > s->estImep) s->estImep = t.imep;
   s->npts++;
  }
+ s->uncappedHp = s->estHp;
+ if (b->delivery > 0) {
+  float save = s->injHp, peak = 0;
+  s->injHp = 0;
+  for (int i = 0; i < 40; i++) {
+   float rpm = lo + (top - lo) * i / 39.f;
+   TqOut t = EvalTorque(b, s, rpm, 1, b->boost * SpoolTarget(b, s, rpm, 1), 1, 90, 1);
+   float hp = (t.tind - t.tfric - t.tpar) * rpm / 7121.f;
+   if (hp > peak) peak = hp;
+  }
+  s->injHp = save; s->uncappedHp = peak;
+ }
 }
+
+static const char *PART_NAME[] = {"Block", "Flywheel", "Starter", "Charging", "Carb", "Injectors", "Turbo", "Oiling"};
 
 static int BuildWarnings(const Build *b, const Spec *s, char out[][96], int *sev, int max) {
  int n = 0;
  const FuelDef *f = &FUELS[b->fuel];
 #define W(sv, ...) do { if (n < max) { snprintf(out[n], 96, __VA_ARGS__); sev[n] = sv; n++; } } while (0)
+ char why[96];
+ for (int p = 0; p < P_N; p++) {
+  int st = PartStatus(b, s, p, why, 96);
+  if (st == 3) W(3, "%s DOESN'T FIT: %s", PART_NAME[p], why);
+  else if (st == 2) W(2, "%s: %s", PART_NAME[p], why);
+  else if (st == 1) W(1, "%s: %s", PART_NAME[p], why);
+ }
  if (f->diesel && b->cr < 14) W(2, "Diesel needs 14:1+ compression to self-ignite.");
  else if (f->diesel && b->cr < 16) W(1, "Low diesel compression: hard cold starts.");
  if (f->diesel && b->delivery != 3 && b->delivery != 4) W(2, "Diesel needs direct or mechanical injection.");
- if (s->needsElec && !s->hasBatt) W(2, "EFI needs power: add an alternator or electric start.");
- if (b->starter == 1 && !b->alternator) W(1, "No alternator: the battery will drain.");
- if (b->starter == 0 && s->compDrag > 11.f) W(2, "Too much compression to pull-start. Go electric.");
+ if (s->needsElec && !s->hasBatt) W(2, "EFI needs power: add a charging system or electric start.");
+ if (!f->diesel && !s->magneto && !s->hasBatt) W(2, "No spark: car flywheels have no magneto. Add a battery.");
+ if (STARTERS[b->starter].elec && b->alternator == 0) W(1, "Nothing charges the battery: it will drain.");
+ if (!STARTERS[b->starter].elec && s->compDrag * s->decomp > STARTERS[b->starter].power * 0.92f) W(2, "Too much compression to pull through. Decompressor or electric.");
  if (b->cycle == 1) {
   if (b->mix < 1) W(2, "NO OIL in the fuel. A 2-stroke will seize.");
   else if (b->mix > 75) W(1, "Lean oil mix: high wear under load.");
@@ -292,30 +505,31 @@ static int BuildWarnings(const Build *b, const Spec *s, char out[][96], int *sev
  }
  if (s->estImep > s->pLimit) W(2, "Cylinder pressure %.0f bar > block/internals limit %.0f.", s->estImep, s->pLimit);
  else if (s->estImep > s->pLimit * 0.9f) W(1, "Cylinder pressure near the %.0f bar limit.", s->pLimit);
- if (b->forced && b->forced != 4 && b->boost > FORCED[b->forced].maxb) W(2, "%.0f psi is past this turbo's limit (%.0f): overspeed.", b->boost, FORCED[b->forced].maxb);
- if (b->forced == 4 && b->boost > FORCED[4].maxb) W(2, "Blower can't make %.0f psi safely.", b->boost);
  if (b->forced && !b->intercooler && b->boost > 8 && !f->diesel) W(1, "No intercooler: hot charge, more knock.");
  if (s->estHp * 745.7f * 0.85f > s->coolCap * 1.1f) W(1, "Cooling is marginal for sustained full load.");
  if (b->filter == 0) W(1, "No air filter: dirt will score the cylinders.");
  if (b->cycle == 0 && b->exhaust == 3) W(1, "Expansion chambers only help 2-strokes.");
- if (b->fuel == 6 && b->delivery < 3) W(1, "Nitro really wants injection.");
- if (b->cycle == 0 && fabsf(b->tilt) > 50) W(1, "Cylinders laid over %.0f deg: wet sump drains badly, oil pressure drops.", fabsf(b->tilt));
+ if (b->cycle == 0 && fabsf(b->tilt) > 50) W(1, "Cylinders laid over %.0f deg: wet sump drains badly.", fabsf(b->tilt));
  if (b->layout >= 2 && fabsf(b->tilt) > 30) W(1, "Tilting a V/boxer that far puts a bank near the floor.");
+ if (b->gov == 0) W(1, "No governor or limiter: nothing stops it over-revving.");
 #undef W
  return n;
 }
 
 // ===== live simulation =====
-enum { DMG_KNOCK, DMG_ROD, DMG_VALVE, DMG_PRESS, DMG_HEAT, DMG_OILP, DMG_LUBE, DMG_DIRT, DMG_TURBO, DMG_N };
-static const char *DMG_TITLE[] = {"Holed piston","Thrown rod","Dropped valve","Blown head gasket","Seized engine","Spun bearing","Seized piston","Scored cylinders","Turbo grenade"};
+enum { DMG_KNOCK, DMG_ROD, DMG_VALVE, DMG_PRESS, DMG_HEAT, DMG_OILP, DMG_LUBE, DMG_DIRT, DMG_TURBO, DMG_FLY, DMG_LEAN, DMG_N };
+static const char *DMG_TITLE[] = {"Holed piston","Thrown rod","Dropped valve","Blown head gasket","Seized engine","Spun bearing","Seized piston","Scored cylinders","Turbo grenade","Flywheel exploded","Melted piston (lean)"};
 
 typedef struct {
  float omega, angle, rpm;
- float thrCmd, thrAct, idleOpen;
- float spool, boost, temp, oilP, egt, batt, volts;
+ float thrCmd, thrAct, idleOpen, idleCmd, idleI, govOpen;
+ float spool, boost, temp, oilT, oilP, egt, batt, volts;
+ float oilSump, oilHead, oilSupply, oilFlow, oilBurn, oilSplash;
  float health, dmg[DMG_N], dmgRate[DMG_N];
  int ign, choke, limiter, failed, failCause, cut, running, starterOn, charging;
- float recoilT, q, knock, tind, tbrake, load, rough, roughT, crankTime, runTime, wotTime, prevThr;
+ float recoilT, q, knock, lean, tind, tbrake, tgross, load, rough, roughT, crankTime, runTime, wotTime, prevThr;
+ float misT; int fireOk;
+ float starterHeat; int starterDead, recoilDead, partMsgPending; char partMsg[128];
  int bovCount, recoilStuck;
  int dyno; float dynoStart, dynoTarget, dynoInt, dynoLoad, dynoEnd;
  int nd; float drpm[400], dhp[400], dtq[400];
@@ -330,37 +544,49 @@ static float SRand(Sim *m) { m->rng ^= m->rng << 13; m->rng ^= m->rng >> 17; m->
 static void SimReset(Sim *m, const Spec *s, int keepRuns) {
  Sim old = *m;
  memset(m, 0, sizeof *m);
- m->temp = 20; m->batt = 0.85f; m->health = 100; m->limiter = 1; m->rng = 0x1234567u; m->oilP = 0; m->egt = 20;
+ m->temp = 20; m->oilT = 20; m->batt = 0.85f; m->oilSupply = 1; m->health = 100; m->limiter = 1; m->rng = 0x1234567u; m->egt = 20; m->govOpen = 1; m->fireOk = 1;
+ m->oilSump = -1;
  if (keepRuns) { m->npd = old.npd; memcpy(m->pdrpm, old.pdrpm, sizeof m->pdrpm); memcpy(m->pdhp, old.pdhp, sizeof m->pdhp); memcpy(m->pdtq, old.pdtq, sizeof m->pdtq); }
  (void)s;
 }
 
 static int gDev = 0;
 
+static void PartFail(Sim *m, const char *msg) { snprintf(m->partMsg, 128, "%s", msg); m->partMsgPending = 1; }
+
 static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starterHeld) {
  const FuelDef *f = &FUELS[b->fuel];
+ const StarterDef *st = &STARTERS[b->starter];
  float rpm = m->omega * 60.f / (2 * PI);
  m->rpm = rpm;
  float warm = Clampf((m->temp - 20) / 30.f, 0, 1);
+ float warm2 = Clampf((m->temp - 20) / 45.f, 0, 1);
  // electrics
- m->charging = b->alternator && rpm > 1100;
- m->starterOn = starterHeld && b->starter == 1 && !m->failed;
+ float altA = ALTS[b->alternator].amps * Clampf((rpm - 900) / 1500.f, 0, 1);
+ m->charging = altA > s->demandA * 0.5f && altA > 0.5f;
+ m->starterOn = starterHeld && st->elec && !m->failed && !m->starterDead;
  float v = 11.6f + 1.0f * m->batt;
  if (m->starterOn) v -= 1.0f + (1 - m->batt) * 2.5f;
- if (m->charging) v = fmaxf(v, 14.2f);
+ if (altA > s->demandA + 1 && s->hasBatt) v = fmaxf(v, 13.2f + Clampf((altA - s->demandA) / 20.f, 0, 1));
  if (!s->hasBatt) v = 0;
  m->volts = v;
  if (s->hasBatt && !gDev) {
-  float d = 0;
-  if (m->starterOn) d -= 0.02f;
-  if (m->ign && s->needsElec) d -= 0.0012f;
-  if (m->ign) d -= 0.0003f;
-  if (m->charging) d += 0.006f;
-  m->batt = Clampf(m->batt + d * dt, 0, 1);
+  float amps = 0;
+  if (m->starterOn) amps -= 150 * st->power;
+  if (m->ign) amps -= s->demandA * (m->running ? 1.f : 0.6f);
+  if (m->running || rpm > 900) amps += altA;
+  m->batt = Clampf(m->batt + amps / 35.f / 3600.f * 20.f * dt, 0, 1);
  }
+ // starter heat (undersized burns out)
+ if (m->starterOn) {
+  float over = s->dispL / st->maxL;
+  m->starterHeat += dt * (0.45f + (over > 1 ? (over - 1) * 3.f : 0));
+  if (m->starterHeat > 6.f && !gDev) { m->starterDead = 1; PartFail(m, over > 1 ? "Starter motor burned out: under-rated for this engine." : "Starter overheated from cranking too long. Let it cool (rebuild)."); }
+ } else m->starterHeat = fmaxf(0, m->starterHeat - dt * 0.25f);
  // combustion quality
  float q = 1;
- if (!m->ign || m->failed) q = 0;
+ int spark = f->diesel || s->magneto || (s->hasBatt && m->volts > 8.5f);
+ if (!m->ign || m->failed || !spark) q = 0;
  if (f->diesel) {
   if (b->delivery != 3 && b->delivery != 4) q = 0;
   if (b->cr < 14) q = 0;
@@ -369,25 +595,46 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
   if (b->delivery == 0) {
    if (!m->choke) q *= Lerpf(0.18f, 1, warm);
    else q *= Lerpf(1, 0.6f, Clampf((m->temp - 50) / 20.f, 0, 1));
-  } else q *= Lerpf(0.85f, 1, warm);
+   q *= Lerpf(m->choke ? 0.82f : 0.55f, 1, powf(warm2, 0.7f));
+   float big = CARBS[b->carb].cfm / fmaxf(s->needCfm, 1);
+   if (big > 2.2f) q *= 1 - Clampf((big - 2.2f) * 0.2f, 0, 0.45f) * Clampf(1 - rpm / fmaxf(s->redline, 1), 0, 1);
+  } else q *= Lerpf(0.9f, 1, warm2);
   q *= Lerpf(f->cold, 1, warm);
  }
  if (s->needsElec && (!s->hasBatt || m->volts < 9.f)) q = 0;
  if (b->cycle == 1 && s->lube > 2.2f) q *= Clampf(1 - 0.25f * (s->lube - 2.2f), 0.4f, 1);
  if (rpm < 90) q = 0;
- if (m->limiter) { if (rpm > s->redline) m->cut = 1; else if (rpm < s->redline - 180) m->cut = 0; } else m->cut = 0;
+ if (b->gov == 3 && m->limiter) { if (rpm > s->redline) m->cut = 1; else if (rpm < s->redline - 180) m->cut = 0; } else m->cut = 0;
  if (m->cut) q = 0;
  m->q = q;
- m->running = q > 0.05f && rpm > 150;
- // throttle
+ // per-firing misfire gating: sputter is violent, not averaged
+ m->misT -= dt;
+ if (m->misT <= 0) {
+  float cyc = b->cycle ? 360.f : 720.f;
+  m->misT = (cyc / b->cyl) / (fmaxf(rpm, 60) * 6.f);
+  m->fireOk = SRand(m) < q;
+ }
+ m->running = q > 0.05f && rpm > fmaxf(150, s->idle * 0.45f);
+ // throttle, idle control (hunts when cold), governor
  float lag = DELIV[b->delivery].lag;
  float tc = m->thrCmd;
  if (m->dyno) tc = 1;
  m->thrAct += (tc - m->thrAct) * Clampf(dt / lag, 0, 1);
- if (m->running) m->idleOpen += (s->idle - rpm) * 0.00004f * dt * (b->delivery == 0 ? 0.6f : 1.0f) * 60.f;
- m->idleOpen = Clampf(m->idleOpen, 0.0f, 0.3f);
- if (!m->running && rpm < 150) m->idleOpen = Clampf(m->idleOpen, 0.06f, 0.3f);
+ float coldHunt = (b->delivery == 0 ? 1.f : 0.25f) * (1 - warm2);
+ float ierr = s->idle - rpm;
+ if (m->running) m->idleI += ierr * 0.00045f * (1 + 2.2f * coldHunt) * dt;
+ m->idleI = Clampf(m->idleI, 0.0f, 0.3f);
+ if (!m->running && rpm < 150) m->idleI = Clampf(m->idleI, 0.06f, 0.3f);
+ m->idleCmd = Clampf(m->idleI + ierr * 0.00028f * (1 - 0.55f * coldHunt), 0, 0.35f);
+ float itau = 0.05f + 0.4f * coldHunt;
+ m->idleOpen += (m->idleCmd - m->idleOpen) * Clampf(dt / itau, 0, 1);
  float thr = fmaxf(m->thrAct, m->idleOpen);
+ if (s->govRpm > 0 && m->limiter) {
+  float tgt = Clampf(0.55f + (s->govRpm - rpm) * 0.0016f * (1 + 1.5f * (1 - warm2)), 0, 1);
+  float gtau = 0.15f + 0.35f * (1 - warm2);
+  m->govOpen += (tgt - m->govOpen) * Clampf(dt / gtau, 0, 1);
+  thr = fminf(thr, fmaxf(m->govOpen, m->idleOpen * 0.8f));
+ }
  // boost
  if (b->forced == 4) { m->spool = SpoolTarget(b, s, rpm, thr); }
  else if (b->forced) {
@@ -399,14 +646,15 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  if (m->prevThr > 0.5f && thr < 0.15f && m->boost > 5 && b->forced && b->forced != 4) m->bovCount++;
  m->prevThr = thr;
  m->boost = boost;
- TqOut t = EvalTorque(b, s, rpm, thr, boost, q, m->temp, m->charging);
+ TqOut t = EvalTorque(b, s, rpm, thr, boost, q > 0 ? 1 : 0, m->temp, m->charging);
  if (m->choke && m->temp > 50) t.tind *= 0.8f;
- // idle lope
+ m->tgross = t.tind * (q > 0 ? q : 0);
+ if (!m->fireOk) t.tind = 0;
  m->roughT -= dt;
  if (m->roughT <= 0) { m->roughT = 0.025f + 0.04f * SRand(m); m->rough = SRand(m) * 2 - 1; }
  float rough = CAMS[b->cam].rough * Clampf(1 - rpm / 2800.f, 0, 1) + (FLY[b->flywheel].mul < 0.7f ? 0.04f : 0);
  t.tind *= 1 + rough * m->rough;
- m->tind = t.tind; m->knock = t.knock;
+ m->tind = t.tind; m->knock = t.knock; m->lean = t.lean;
  m->tbrake = t.tind - t.tfric - t.tpar;
  m->load = Clampf(t.tind / fmaxf(s->estTq * 1.1f + 1, 1), 0, 1.5f);
  // starter
@@ -415,14 +663,13 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
   float vf = Clampf((m->volts - 8.8f) / 2.f, 0, 1);
   tst = s->stall * fmaxf(0, 1 - rpm / 350.f) * vf;
  }
- if (m->recoilT > 0) { m->recoilT -= dt; tst += 12.f * fmaxf(0, 1 - rpm / 700.f); }
- // compression
+ if (m->recoilT > 0) { m->recoilT -= dt; tst += st->power * fmaxf(0, 1 - rpm / 700.f); }
  int ncomp = b->cycle ? b->cyl : (b->cyl + 1) / 2;
  float cf = Clampf(1 - rpm / 600.f, 0, 1);
- float tcomp = s->compDrag * cf * (0.55f + 0.6f / sqrtf((float)b->cyl) * sinf(m->angle * PI / 180.f * ncomp * 2.f));
+ float decomp = (rpm < 400 && !st->elec) ? s->decomp : 1.f;
+ float tcomp = (1 - 0.8f * (m->fireOk ? q : 0)) * s->compDrag * decomp * cf * (0.55f + 0.6f / sqrtf((float)b->cyl) * sinf(m->angle * PI / 180.f * ncomp * 2.f));
  float coldF = b->cycle ? 1 : Lerpf(OILS[b->oil].cold, 1, warm);
  float tf = t.tfric * coldF;
- // dyno absorber
  float tload = 0;
  if (m->dyno) {
   m->dynoTarget += 700.f * dt;
@@ -438,25 +685,56 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  if (m->failed) resist += 400 * s->dispL + 20;
  if (m->omega < 0.5f && drive < resist) {
   m->omega = 0;
-  if (m->recoilT > 0 && b->starter == 0) m->recoilStuck = 1;
+  if (m->recoilT > 0 && !st->elec) m->recoilStuck = 1;
  } else {
   m->omega += (drive - resist) / s->inertia * dt;
   if (m->omega < 0) m->omega = 0;
  }
  m->angle = fmodf(m->angle + rpm * 6.f * dt, 720.f);
  // thermal
- float Q = (rpm > 100 && q > 0) ? fmaxf(0, t.tind) * m->omega * 0.9f + 1200 * powf(s->dispL, 0.8f) + (m->temp < 75 ? 12000 * powf(s->dispL, 0.8f) : 0) : tf * m->omega * 0.3f;
+ float Q = (rpm > 100 && q > 0) ? fmaxf(0, m->tgross) * m->omega * 0.9f + 1200 * powf(s->dispL, 0.8f) + (m->temp < 75 ? 12000 * powf(s->dispL, 0.8f) : 0) : tf * m->omega * 0.3f;
  float h;
  if (b->cooling == 0) h = s->coolCap / 150.f * (0.4f + 0.6f * Clampf(rpm / 4000.f, 0, 1));
  else h = s->coolCap / 70.f * Clampf((m->temp - 82) / 10.f, 0.06f, 1.f) * (0.5f + 0.5f * Clampf(rpm / 2000.f, 0, 1));
  m->temp += (Q - h * (m->temp - 20)) / s->heatC * dt;
- float egtT = 20 + (m->running ? 250 + 650 * Clampf(t.af * rpm / fmaxf(s->redline, 1), 0, 1.2f) * (0.5f + 0.5f * m->load) : 0);
+ float egtT = 20 + (m->running ? 250 + 650 * Clampf(t.af * rpm / fmaxf(s->redline, 1), 0, 1.2f) * (0.5f + 0.5f * m->load) + (m->lean > 1 ? (m->lean - 1) * 400 : 0) : 0);
  m->egt += (egtT - m->egt) * Clampf(dt * 0.8f, 0, 1);
+ {
+  float tgt = m->temp + (rpm > 50 ? 4 + rpm * 0.0022f + 18 * Clampf(m->load, 0, 1.2f) : -5) - (b->cycle ? 0 : 6) - (b->oilCooler ? 8 + 14 * Clampf(m->load, 0, 1) : 0);
+  m->oilT += (tgt - m->oilT) * Clampf(dt / 22.f, 0, 1);
+ }
  if (b->cycle == 0) {
-  float vf = OILS[b->oil].v * expf(-(m->temp - 90) / 45.f);
-  m->oilP = Clampf((8 + rpm * 0.011f) * vf, 0, 80) * (rpm > 50 ? 1 : 0);
+  if (m->oilSump < 0) m->oilSump = b->oilL;
   float tl = fabsf(b->tilt);
-  if (tl > 50) m->oilP *= 1 - (tl - 50) / 90.f * Clampf(rpm / 6000.f, 0.3f, 1.f);
+  float need = s->oilNeed;
+  if (b->lube == 0) {
+   float reach = Smooth01((m->oilSump - need * 0.5f) / (need * 0.5f)) * (1 - Smooth01((tl - 15) / 20.f));
+   float sp = Clampf(1 - (rpm - 6800) / 3500.f, 0.25f, 1) * (b->cyl > 2 || s->dispL > 0.8f ? 0.45f : 1.f);
+   m->oilSplash = reach * sp;
+   m->oilSupply = m->oilSplash;
+   m->oilFlow = rpm > 50 ? 0.4f * reach * Clampf(rpm / 3000.f, 0.2f, 1.5f) : 0;
+   m->oilP = 0;
+  } else {
+   float supply = b->lube == 2 ? Smooth01((m->oilSump - need * 0.25f) / (need * 0.2f)) : Smooth01((m->oilSump - need * 0.55f) / (need * 0.4f));
+   if (b->lube == 1 && tl > 45) supply *= 1 - 0.5f * Smooth01((tl - 45) / 40.f) * Clampf(rpm / 5000.f, 0.3f, 1.f);
+   if (m->oilSump > s->oilMax) supply *= 0.85f;
+   if (supply < 0.98f && rpm > 50) supply *= 0.8f + 0.2f * SRand(m);
+   m->oilSupply = supply;
+   float vf = OILS[b->oil].v * expf(-(m->oilT - 90) / 45.f);
+   m->oilP = Clampf((8 + rpm * 0.011f) * vf, 0, 80) * (rpm > 50 ? 1 : 0) * supply * (b->lube == 2 ? 1.1f : 1.f);
+   m->oilFlow = rpm > 50 ? 0.03f * powf(s->dispL, 0.6f) * rpm / 1000.f * supply : 0;
+  }
+  // circulation: pump lifts oil to the heads, gravity drains it back; tilt slows drain-back
+  float up = b->lube == 0 ? m->oilFlow * 0.05f : m->oilFlow;
+  float take = fminf(up * dt, fmaxf(m->oilSump - 0.02f, 0));
+  m->oilSump -= take; m->oilHead += take;
+  float drain = m->oilHead * s->drainK * dt;
+  m->oilHead -= drain; m->oilSump += drain;
+  if (m->oilHead > s->oilHeadCap) { float ex = (m->oilHead - s->oilHeadCap) * 0.5f * dt; m->oilHead -= ex; m->oilBurn += ex; }
+  float burn = (m->running ? 2e-6f * rpm * s->dispL * (1 + (m->health < 60 ? 4 : 0) + m->boost / 12.f) : 0) * dt;
+  if (b->tilt < -75 || b->tilt > 75) burn *= 3;
+  m->oilSump = fmaxf(0, m->oilSump - burn); m->oilBurn += burn;
+  if (m->oilSump > s->oilMax && rpm > 1500) m->tbrake -= (m->oilSump / s->oilMax - 1) * s->dispL * 25 * (rpm / 6000.f) * (rpm / 6000.f);
  }
  // damage
  memset(m->dmgRate, 0, sizeof m->dmgRate);
@@ -466,10 +744,14 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
   if (b->cycle == 0 && rpm > s->floatRpm * 1.05f) m->dmgRate[DMG_VALVE] = (rpm / (s->floatRpm * 1.05f) - 1) * 600.f;
   if (t.imep > s->pLimit) m->dmgRate[DMG_PRESS] = (t.imep / s->pLimit - 1) * 80.f;
   if (m->temp > s->danger) m->dmgRate[DMG_HEAT] = (m->temp - s->danger) * 0.8f + (m->temp > s->danger + 30 ? 20 : 0);
-  if (b->cycle == 0 && m->oilP < 10 && rpm > 2500) m->dmgRate[DMG_OILP] = (10 - m->oilP) * 0.8f;
+  if (b->cycle == 0 && b->lube > 0 && m->oilP < 10 && rpm > 2500) m->dmgRate[DMG_OILP] = (10 - m->oilP) * 0.8f;
+  if (b->cycle == 0 && b->lube == 0 && m->oilSplash < 0.6f && rpm > 2000) m->dmgRate[DMG_OILP] = (0.6f - m->oilSplash) * 12.f * rpm / 4000.f;
+  if (b->cycle == 0 && m->oilT > 150) m->dmgRate[DMG_OILP] += (m->oilT - 150) * 0.5f;
   if (b->cycle == 1 && s->lube < 0.6f) m->dmgRate[DMG_LUBE] = (0.6f - s->lube) * Clampf(t.af, 0.1f, 1) * rpm / 6000.f * 40.f;
   m->dmgRate[DMG_DIRT] = FILTERS[b->filter].dirt * t.af * rpm / 6000.f * 2.5f;
   if (b->forced && b->boost > FORCED[b->forced].maxb) m->dmgRate[DMG_TURBO] = m->spool * (b->boost / FORCED[b->forced].maxb - 1) * 25.f;
+  if (rpm > FLY[b->flywheel].maxRpm) m->dmgRate[DMG_FLY] = (rpm / FLY[b->flywheel].maxRpm - 1) * 700.f + 3.f;
+  if (m->lean > 1.02f && !f->diesel) m->dmgRate[DMG_LEAN] = (m->lean - 1) * 70.f;
  }
  if (!gDev && !m->failed) {
   float tot = 0;
@@ -481,21 +763,19 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
    m->failCause = best;
   }
  }
- // stats
  if (m->running) m->runTime += dt; else m->runTime = 0;
  if (m->running && m->thrAct > 0.9f) m->wotTime += dt; else m->wotTime = 0;
  if (rpm > m->maxRpm) m->maxRpm = rpm;
- // dyno recording
  if (m->dyno) {
   if (m->dynoTarget < m->dynoStart + 250) { m->dSum = 0; m->dCnt = 0; } else {
-  m->dSum += m->tbrake; m->dCnt++;
-  float br = m->dSum / m->dCnt;
-  if (m->nd < 400 && (m->nd == 0 || rpm - m->drpm[m->nd - 1] >= 50)) {
-   m->dSum = 0; m->dCnt = 0;
-   m->drpm[m->nd] = rpm; m->dtq[m->nd] = br; m->dhp[m->nd] = br * rpm / 7121.f; m->nd++;
-   if (br * rpm / 7121.f > m->dynoPeakHp) m->dynoPeakHp = br * rpm / 7121.f;
-   if (br > m->dynoPeakTq) m->dynoPeakTq = br;
-  }
+   m->dSum += m->tbrake; m->dCnt++;
+   float br = m->dSum / m->dCnt;
+   if (m->nd < 400 && (m->nd == 0 || rpm - m->drpm[m->nd - 1] >= 50) && m->dCnt >= 30 + 2400 / b->cyl) {
+    m->dSum = 0; m->dCnt = 0;
+    m->drpm[m->nd] = rpm; m->dtq[m->nd] = br; m->dhp[m->nd] = br * rpm / 7121.f; m->nd++;
+    if (br * rpm / 7121.f > m->dynoPeakHp) m->dynoPeakHp = br * rpm / 7121.f;
+    if (br > m->dynoPeakTq) m->dynoPeakTq = br;
+   }
   }
   if (m->dynoTarget >= m->dynoEnd || (!m->running && rpm < 200)) m->dyno = 2;
  }
