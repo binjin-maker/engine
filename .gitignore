@@ -1,0 +1,7 @@
+raylib/
+font_*.h
+*.o
+engine
+shots/
+*.sav
+audio.raw
