@@ -27,7 +27,7 @@ typedef struct {
  volatile float rpm, load, q, knock, spool, boost, thr, volts, vcylL, volume, egt, temp;
  volatile int running, ncyl, two, exhaust, diesel, forced, starter, recoil, bov, bang, cut, filter, valvetrain, nb, click, failed, intercooler;
  float fire[16]; int bank[16]; float gain[16]; float delay[16];
- volatile float musicVol, duck;
+ volatile float musicVol, duck, engVol, sfxVol;
  volatile int sfxHead; int sfxQ[32];
 } AudioIn;
 static AudioIn AU = {0};
@@ -159,9 +159,9 @@ static void AudioCB(void *buf, unsigned int frames) {
  // exhaust character: body freq, body Q, lowpass, comb feedback, pipe length (m), drive, volume
  static const float EXC[4][7] = {
   {95, 1.3f, 520, 0.35f, 2.6f, 1.2f, 0.55f},
-  {110,1.6f, 1500,0.55f, 1.9f, 2.0f, 0.85f},
-  {125,1.2f, 4800,0.70f, 1.2f, 3.2f, 1.10f},
-  {170,2.0f, 3600,0.80f, 1.0f, 2.6f, 0.95f},
+  {110,1.6f, 1500,0.55f, 1.9f, 2.0f, 0.60f},
+  {125,1.2f, 4800,0.70f, 1.2f, 3.2f, 1.15f},
+  {170,2.0f, 3600,0.80f, 1.0f, 2.6f, 0.90f},
  };
  const float *E = EXC[ex];
  float sc = powf(0.5f / vc, 0.22f);
@@ -183,13 +183,13 @@ static void AudioCB(void *buf, unsigned int frames) {
  BqBP(&SY.rope, 1400, 2.0f);
  BqLP(&SY.bangf, 700, 0.9f);
  BqHP(&SY.clatHP, 1800, 0.8f);
- BqBP(&SY.mechBP, 2400 + rpmT * 0.2f, 3.f);
+ BqBP(&SY.mechBP, 1400 + rpmT * 0.05f, 0.9f);
  if (AU.bov != SY.lastBov) { SY.lastBov = AU.bov; SY.bovEnv = Clampf(AU.boost / 12.f, 0.3f, 1); }
  if (AU.bang != SY.lastBang) { SY.lastBang = AU.bang; SY.bangEnv = 1.0f; }
  if (AU.click != SY.lastClick) { SY.lastClick = AU.click; SY.clickEnv = 1.0f; }
  while (gSfxTail != AU.sfxHead) { SfxStart(AU.sfxQ[gSfxTail & 31]); gSfxTail++; }
  float mvol = AU.musicVol * (1 - 0.7f * Clampf(AU.duck, 0, 1));
- float vol = AU.volume * E[6];
+ float vol = AU.volume * AU.engVol * E[6];
  float intakeLoud = AU.filter == 0 ? 2.5f : (AU.filter == 3 ? 1.6f : (AU.filter == 4 ? 0.6f : 1.0f));
  float tauB = AU.two ? 0.0018f : (AU.diesel ? 0.0035f : 0.0028f);
  float tauN = AU.two ? 0.0025f : 0.004f;
@@ -255,8 +255,7 @@ static void AudioCB(void *buf, unsigned int frames) {
   float inn = BqRun(&SY.intake, Nz() * SY.eI);
   common += BqRun(&SY.intakeLP, inn) * 0.9f * intakeLoud;
   SY.eI *= dI;
-  if (SY.tick > 0.001f) { common += BqRun(&SY.mechBP, Nz()) * SY.tick * 1.2f; SY.tick *= 0.985f; }
-  if (AU.running || rpm > 50) { SY.gearPh += 2 * PI * (rpm / 60.f * 23.f) / SR; common += sinf(SY.gearPh) * 0.006f * Clampf(rpm / 5000.f, 0, 1.5f); }
+  if (SY.tick > 0.001f) { common += BqRun(&SY.mechBP, Nz()) * SY.tick * 0.5f; SY.tick *= 0.97f; }
   if (SY.ping > 0.001f) { SY.pingPh += 2 * PI * 6300.f / SR; common += sinf(SY.pingPh) * SY.ping * 0.22f; SY.ping *= 0.9993f; }
   if (turbo) {
    float sp = AU.spool;
@@ -282,12 +281,13 @@ static void AudioCB(void *buf, unsigned int frames) {
   float L, R;
   if (AU.nb > 1) { L = o[0] * 0.72f + o[1] * 0.28f; R = o[0] * 0.28f + o[1] * 0.72f; }
   else { L = R = o[0]; }
-  float mus = MusicRun() * mvol, fx = SfxRun() * AU.volume * 2.2f;
-  L = (L * 1.25f + common * 1.8f) * vol; R = (R * 1.25f + common * 1.8f) * vol;
+  float mus = MusicRun() * mvol, fx = SfxRun() * AU.volume * AU.sfxVol * 2.2f;
+  float ev = AU.volume * AU.engVol;
+  L = tanhf(L * 1.75f) * E[6] * ev * 1.6f + common * 1.8f * ev; R = tanhf(R * 1.75f) * E[6] * ev * 1.6f + common * 1.8f * ev;
   SY.dcL = SY.dcL * 0.9995f + L * 0.0005f; L -= SY.dcL;
   SY.dcR = SY.dcR * 0.9995f + R * 0.0005f; R -= SY.dcR;
-  out[i * 2] = tanhf(L * 1.4f + mus + fx) * 0.97f;
-  out[i * 2 + 1] = tanhf(R * 1.4f + mus + fx) * 0.97f;
+  out[i * 2] = tanhf(L + mus + fx) * 0.97f;
+  out[i * 2 + 1] = tanhf(R + mus + fx) * 0.97f;
  }
 }
 

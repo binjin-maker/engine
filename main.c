@@ -32,6 +32,9 @@ static const Color COL_GRN = {90, 205, 115, 255}, COL_YEL = {240, 196, 60, 255},
 
 // ===== toasts =====
 static int gToastQuiet = 0;
+typedef struct { int magic, invertX, invertY, blur, fps; float sens, zoom, master, eng, music, sfx, smoke; } Settings;
+static Settings gSet = {0x53455431, 0, 0, 1, 0, 1.f, 1.f, 0.85f, 1.f, 0.6f, 1.f, 10.f};
+static int gShowSettings = 0;
 typedef struct { char s[128]; float t; Color c; } Toast;
 static Toast gToast[6];
 static void ToastAdd(const char *s, Color c) {
@@ -67,6 +70,9 @@ static void SaveRead(void) {
  if (d && sz == (int)sizeof gSave) { memcpy(&gSave, d, sizeof gSave); if (gSave.magic != 0x454E4731) memset(&gSave, 0, sizeof gSave); }
  if (d) UnloadFileData(d);
 }
+static const char *CfgPath(void) { return TextFormat("%sengine_garage.cfg", GetApplicationDirectory()); }
+static void SettingsSave(void) { SaveFileData(CfgPath(), &gSet, sizeof gSet); }
+static void SettingsLoad(void) { int sz = 0; unsigned char *d = LoadFileData(CfgPath(), &sz); if (d && sz == (int)sizeof gSet && ((Settings *)d)->magic == gSet.magic) memcpy(&gSet, d, sizeof gSet); if (d) UnloadFileData(d); }
 static void Ach(int id) {
  if (gSave.ach & (1u << id)) return;
  gSave.ach |= 1u << id; SaveWrite();
@@ -279,10 +285,10 @@ static void UpdateCamera3D(Camera3D *cam, int allowDrag) {
  if (!gDragging && allowDrag && !gUiHoverPrev && (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))) gDragging = 1;
  if (gDragging) {
   Vector2 d = GetMouseDelta();
-  camYaw += d.x * 0.006f; camPitch -= d.y * 0.005f;
+  camYaw += d.x * 0.006f * gSet.sens * (gSet.invertX ? -1 : 1); camPitch += d.y * 0.005f * gSet.sens * (gSet.invertY ? -1 : 1);
   if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) gDragging = 0;
  }
- if (!gUiHoverPrev && allowDrag) { float w = GetMouseWheelMove(); camDistT *= powf(0.88f, w); }
+ if (!gUiHoverPrev && allowDrag) { float w = GetMouseWheelMove(); camDistT *= powf(1 - 0.12f * gSet.zoom, w); }
  camPitch = Clampf(camPitch, 0.02f, 1.35f);
  float base = fmaxf(7.0f, (G.L + G.ccW + 900) * 0.01f * 1.15f);
  camDistT = Clampf(camDistT, base * 0.4f, base * 3.f);
@@ -315,11 +321,35 @@ static void Scene3D(Camera3D cam) {
  gBase = MatrixMultiply(MatrixMultiply(MatrixScale(0.01f, 0.01f, 0.01f), shake), MatrixTranslate(0, G.H, 0));
  gDS.glow = gMode ? gM.egt : 20;
  unsigned saveHide = gHide; int saveCut = gDS.cut;
- if (gDS.oilView) { gDS.cut = 1; gHide |= (1u << G_HEAD) | (1u << G_PLUG) | (1u << G_INTAKE) | (1u << G_FILTER) | (1u << G_SC) | (1u << G_CHARGE) | (1u << G_EXH) | (1u << G_TURBO) | (1u << G_COOL); }
+ if (gDS.oilView) { gDS.cut = 1; gHide |= (1u << G_BLOCK) | (1u << G_HEAD) | (1u << G_PLUG) | (1u << G_INTAKE) | (1u << G_FILTER) | (1u << G_SC) | (1u << G_CHARGE) | (1u << G_EXH) | (1u << G_TURBO) | (1u << G_COOL) | (1u << G_STARTER) | (1u << G_ALT); }
  gDS.oilSump = gMode ? (gM.oilSump < 0 ? gB.oilL : gM.oilSump) : gB.oilL; gDS.oilHead = gMode ? gM.oilHead : 0; gDS.oilNeed = gS.oilNeed;
  gDS.oilSupply = gMode ? gM.oilSupply : 1; gDS.oilFlow = gMode ? gM.oilFlow : 0.25f; G_drainVis = gS.drainK / 1.6f;
- if (gDS.oilView) OilUpdate(&gB, &gDS, gMode ? gM.rpm : 600, GetFrameTime() > 0.1f ? 0.016f : GetFrameTime());
+ gDS.oilT = gMode ? gM.oilT : 60;
+ {
+  float cm, ch, cw, ct;
+  if (gB.cycle) { float l = Clampf(gS.lube / 0.8f, 0, 1); cm = cw = l; ch = 1; ct = l; if (gMode && gM.rpm < 50) cm = cw = fminf(l, 0.5f); }
+  else if (gMode && gM.rpm > 50) {
+   if (gB.lube == 0) { cm = gM.oilSplash; cw = gM.oilSplash * Clampf(gM.rpm / 1500.f, 0.3f, 1); ch = gM.oilSplash * 0.6f; ct = 0; }
+   else { float p = Clampf(gM.oilP / 14.f, 0, 1) * gM.oilSupply; cm = p; cw = p * Clampf(gM.rpm / 1200.f, 0.4f, 1); ch = fmaxf(p * Clampf(gM.oilP / 22.f, 0, 1), Clampf(gM.oilHead / fmaxf(gS.oilHeadCap, 0.05f), 0, 1)); ct = Clampf(gM.oilP / 28.f, 0, 1) * gM.oilSupply; }
+  } else if (gMode) { cm = cw = 0.5f; ch = 0.35f; ct = 0.35f; }
+  else {
+   char why[8]; int st = PartStatus(&gB, &gS, P_LUBE, why, 8);
+   float base = st == 2 ? 0.3f : (st == 1 ? 0.6f : 1.f);
+   cm = base; cw = base; ct = base; ch = gB.lube == 0 ? base * 0.6f : (gS.drainK < 0.6f ? 1 : base);
+   if (gB.lube == 1 && fabsf(gB.tilt) > 50) { cm = cw = ct = 0.3f; ch = 1; }
+  }
+  gDS.covMain = cm; gDS.covRod = cm * 0.95f; gDS.covWall = cw; gDS.covHead = ch; gDS.covTurbo = ct;
+ }
+ if (gDS.oilView) OilUpdate(&gB, &gS, &gDS, gMode ? gM.rpm : 600, gVisAng, GetFrameTime() > 0.1f ? 0.016f : GetFrameTime());
  DrawEngine(&gB, &gS, gVisAng, &gDS);
+ if (gDS.oilView) {
+  // see-through block and heads on top so the oil is visible inside
+  gHide = 0; gOnly = (1u << G_BLOCK) | (1u << G_HEAD); gAlpha = 46; gDS.cut = 0; gDS.oilView = 0;
+  rlDisableDepthMask();
+  DrawEngine(&gB, &gS, gVisAng, &gDS);
+  rlEnableDepthMask();
+  gOnly = 0; gAlpha = 0; gDS.oilView = 1;
+ }
  gHide = saveHide; gDS.cut = saveCut;
  PuffDraw();
  EndMode3D();
@@ -628,8 +658,9 @@ static void TestUpdate(float dt, int startHeld, int startPress) {
   float rich = f->diesel ? Clampf(gM.load - gM.spool * 0.6f, 0, 1) : 0;
   if (gM.health < 45) dirt += 0.4f;
   float amount = flow * dirt;
-  int n = (int)Clampf(amount * 0.6f + SRand(&gM), 0, 6);
-  float size = 0.035f * sqrtf(fmaxf(gS.dispL, 0.1f)) * (0.7f + 0.6f * Clampf(amount / 6.f, 0, 2));
+  float sm = gSet.smoke;
+  int n = (int)Clampf(amount * 0.6f * (0.3f + 0.25f * sm) + SRand(&gM), 0, 4 + (int)(sm * 2));
+  float size = 0.035f * sqrtf(fmaxf(gS.dispL, 0.1f)) * (0.7f + 0.6f * Clampf(amount / 6.f, 0, 2)) * (0.6f + 0.12f * sm);
   for (int oi = 0; oi < G.nOut; oi++) {
    Vector3 o = LocalToWorld(G.exhOut[oi]);
    for (int k = 0; k < n; k++) {
@@ -641,7 +672,8 @@ static void TestUpdate(float dt, int startHeld, int startPress) {
     else if (gM.choke && gM.temp > 50) c = (Color){45, 45, 48, 140};
     else if (gM.health < 45) c = (Color){150, 165, 190, 130};
     else c = (Color){150, 152, 158, (unsigned char)Clampf(30 + 25 * dirt, 0, 110)};
-    PuffAdd(o, v, 1.4f + 1.2f * Clampf(amount / 8.f, 0, 1), size * (0.8f + 0.4f * SRand(&gM)), c);
+    c.a = (unsigned char)Clampf(c.a * (0.7f + 0.09f * sm), 0, 235);
+    if (sm > 0) PuffAdd(o, v, (1.4f + 1.2f * Clampf(amount / 8.f, 0, 1)) * (0.8f + 0.06f * sm), size * (0.8f + 0.4f * SRand(&gM)), c);
    }
    if (gM.temp < 40 && gM.running && SRand(&gM) < 0.5f) PuffAdd(o, (Vector3){0.8f, 0.3f, 0}, 1.4f, size * 1.2f, (Color){232, 232, 236, 70});
    if (!gB.cycle && fabsf(gB.tilt) > 65 && gM.running) PuffAdd(o, (Vector3){0.9f, 0.2f, 0}, 1.6f, size, (Color){150, 165, 190, 90});
@@ -803,7 +835,7 @@ int gBtnIgn, gBtnStart, gBtnChoke, gBtnLim, gBtnDyno, gBtnCut, gBtnBack, gStartH
 
 static void ViewBar(int sw) {
  static const char *nm[] = {"CUTAWAY", "HEADS", "INTAKE", "EXHAUST", "COOLING", "ACCESS.", "STAND", "OIL FLOW"};
- static const unsigned masks[] = {0, (1u << G_HEAD) | (1u << G_PLUG), (1u << G_INTAKE) | (1u << G_FILTER) | (1u << G_SC) | (1u << G_CHARGE), (1u << G_EXH) | (1u << G_TURBO), 1u << G_COOL, (1u << G_ALT) | (1u << G_STARTER) | (1u << G_FRONT), 1u << G_STAND};
+ static const unsigned masks[] = {0, (1u << G_HEAD) | (1u << G_PLUG), (1u << G_INTAKE) | (1u << G_FILTER) | (1u << G_SC) | (1u << G_CHARGE), (1u << G_EXH) | (1u << G_TURBO), 1u << G_COOL, (1u << G_ALT) | (1u << G_STARTER) | (1u << G_FRONT) | (1u << G_OILSYS), 1u << G_STAND};
  float x0 = 494, x1 = sw - 424, w = (x1 - x0) / 8.f;
  if (w > 116) { x0 += (w - 116) * 4.f; w = 116; }
  for (int i = 0; i < 8; i++) {
@@ -917,6 +949,29 @@ static void Overview(int sw, int sh) {
 #undef USE
 }
 
+static void SettingsPanel(int sw, int sh) {
+ float w = 520, h = 628, x = sw * 0.5f - w * 0.5f, y = 66;
+ Panel((Rectangle){x, y, w, h}, (Color){18, 20, 25, 252});
+ DrawRectangleRoundedLinesEx((Rectangle){x, y, w, h}, 0.03f, 8, 1.5f, COL_LINE);
+ Tb("SETTINGS", x + 20, y + 16, 24, COL_TXT);
+ if (UiButton((Rectangle){x + w - 110, y + 14, 92, 34}, "CLOSE", 0, 1)) { gShowSettings = 0; SettingsSave(); }
+ float yy = y + 66, rw = w - 40, rx = x + 20; int d; char vb[32];
+ Tb("CAMERA", rx, yy, 14, COL_DIM); yy += 22;
+ if ((d = UiSelect((Rectangle){rx, yy, rw, 40}, "Invert X (orbit)", gSet.invertX ? "On" : "Off", "Flip left/right orbit direction.", 1))) gSet.invertX ^= 1; yy += 46;
+ if ((d = UiSelect((Rectangle){rx, yy, rw, 40}, "Invert Y (tilt)", gSet.invertY ? "On" : "Off", "Flip up/down tilt direction.", 1))) gSet.invertY ^= 1; yy += 46;
+ snprintf(vb, 32, "%.2fx", gSet.sens); UiSlider(20, (Rectangle){rx, yy, rw, 40}, "Mouse sensitivity", &gSet.sens, 0.2f, 3.f, 0.05f, vb, NULL, 1); yy += 46;
+ snprintf(vb, 32, "%.2fx", gSet.zoom); UiSlider(21, (Rectangle){rx, yy, rw, 40}, "Zoom speed", &gSet.zoom, 0.2f, 3.f, 0.05f, vb, NULL, 1); yy += 54;
+ Tb("AUDIO", rx, yy, 14, COL_DIM); yy += 22;
+ snprintf(vb, 32, "%.0f%%", gSet.master * 100); UiSlider(22, (Rectangle){rx, yy, rw, 40}, "Master", &gSet.master, 0, 1, 0.05f, vb, NULL, 1); yy += 46;
+ snprintf(vb, 32, "%.0f%%", gSet.eng * 100); UiSlider(23, (Rectangle){rx, yy, rw, 40}, "Engine", &gSet.eng, 0, 2, 0.05f, vb, NULL, 1); yy += 46;
+ snprintf(vb, 32, "%.0f%%", gSet.music * 100); UiSlider(24, (Rectangle){rx, yy, rw, 40}, "Music", &gSet.music, 0, 1, 0.05f, vb, NULL, 1); yy += 46;
+ snprintf(vb, 32, "%.0f%%", gSet.sfx * 100); UiSlider(25, (Rectangle){rx, yy, rw, 40}, "Effects", &gSet.sfx, 0, 2, 0.05f, vb, NULL, 1); yy += 54;
+ Tb("GRAPHICS", rx, yy, 14, COL_DIM); yy += 22;
+ snprintf(vb, 32, "%.0fx", gSet.smoke); UiSlider(26, (Rectangle){rx, yy, rw, 40}, "Smoke amount", &gSet.smoke, 0, 20, 1, vb, NULL, 1); yy += 46;
+ if ((d = UiSelect((Rectangle){rx, yy, rw, 40}, "Motion blur", gSet.blur ? "On" : "Off", "Blurs pistons, flywheel and fan at real rpm.", 1))) gSet.blur ^= 1; yy += 46;
+ (void)sh;
+}
+
 static void TopBar(int sw) {
  DrawRectangle(0, 0, sw, 52, (Color){13, 14, 17, 255});
  DrawRectangle(0, 52, sw, 1, COL_LINE);
@@ -926,7 +981,8 @@ static void TopBar(int sw) {
  if (gDev) { DrawRectangleRounded((Rectangle){340, 13, 120, 26}, 0.4f, 6, COL_RED); TxC("DEV 2323", 400, 17, 15, COL_TXT, 1); }
  if (UiButton((Rectangle){sw - 222, 9, 210, 34}, TextFormat("CHALLENGES  %d/%d", AchCount(), NACH), gShowAch ? 1 : 0, 1)) gShowAch ^= 1;
  if (UiButton((Rectangle){sw - 400, 9, 170, 34}, gMusicOn ? "MUSIC: ON  [N]" : "MUSIC: OFF  [N]", 0, 1)) gMusicOn ^= 1;
- TxR(gMuted ? "SOUND MUTED [M]" : TextFormat("VOL %.0f%%  (+/-)", gVolume * 100), sw - 412, 18, 14, COL_DIM, 0);
+ if (UiButton((Rectangle){sw - 530, 9, 122, 34}, "SETTINGS", gShowSettings ? 1 : 0, 1)) { gShowSettings ^= 1; if (!gShowSettings) SettingsSave(); }
+ TxR(gMuted ? "SOUND MUTED [M]" : TextFormat("VOL %.0f%%  (+/-)", gSet.master * 100), sw - 542, 18, 14, COL_DIM, 0);
 }
 
 static void AchPanel(int sw, int sh) {
@@ -968,7 +1024,7 @@ static void AutoAudioTest(void) {
  float buf[4096 * 2];
  FILE *f = fopen(TextFormat("%s/audio.raw", gShotDir), "wb");
  double sum = 0; float peak = 0; int nan = 0;
- AU.running = 1; AU.q = 1; AU.volume = 0.7f;
+ AU.running = 1; AU.q = 1; AU.volume = 0.7f; AU.engVol = 1; AU.sfxVol = 1;
  for (int blk = 0; blk < 60; blk++) {
   AU.rpm = 800 + blk * 100.f; AU.load = blk < 30 ? 0.3f : 1.0f; AU.ncyl = 4; AU.vcylL = 0.5f; AU.fire[0] = 0; AU.fire[1] = 180; AU.fire[2] = 360; AU.fire[3] = 540; AU.gain[0] = AU.gain[1] = AU.gain[2] = AU.gain[3] = 1; AU.thr = AU.load; AU.spool = blk / 60.f;
   AudioCB(buf, 4096);
@@ -993,7 +1049,7 @@ int main(int argc, char **argv) {
  GenTextureMipmaps(&fB.texture); SetTextureFilter(fB.texture, TEXTURE_FILTER_TRILINEAR);
  rlSetClipPlanes(0.2, 250);
  RenderInit();
- SaveRead();
+ SaveRead(); SettingsLoad();
  gB = PRESETS[gPreset];
  OnBuildChanged(); ResetCamDist();
  SimReset(&gM, &gS, 0);
@@ -1050,8 +1106,8 @@ int main(int argc, char **argv) {
   if (IsKeyPressed(KEY_O) && gMode == 0) gShowOverview ^= 1;
   if (IsKeyPressed(KEY_V)) gDS.oilView ^= 1;
   if (IsKeyPressed(KEY_N)) gMusicOn ^= 1;
-  if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) gVolume = Clampf(gVolume + 0.1f, 0, 1);
-  if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) gVolume = Clampf(gVolume - 0.1f, 0, 1);
+  if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) gSet.master = Clampf(gSet.master + 0.1f, 0, 1);
+  if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) gSet.master = Clampf(gSet.master - 0.1f, 0, 1);
   skipKeys:;
   int startHeld = 0, startPress = 0;
   // autotest script
@@ -1114,11 +1170,12 @@ int main(int argc, char **argv) {
     static int k3 = 0; k3++;
     if (k3 == 1) { gMode = 0; gShowAch = 0; gB = PRESETS[3]; OnBuildChanged(); ResetCamDist(); gShowOverview = 1; }
     if (k3 == 4) Shot("overview");
-    if (k3 == 5) { gShowOverview = 0; gDS.oilView = 1; gTab = 5; gB.tilt = 60; OnBuildChanged(); }
+    if (k3 == 5) { gShowOverview = 0; gDS.oilView = 0; gTab = 5; gB = PRESETS[5]; OnBuildChanged(); camYaw = 2.3f; }
     if (k3 == 8) Shot("garage_oil_tilt");
     if (k3 == 9) { gDS.oilView = 0; gB = PRESETS[8]; OnBuildChanged(); gTab = 4; }
-    if (k3 == 12) Shot("garage_buggy");
-    if (k3 > 14) break;
+    if (k3 == 12) { Shot("garage_buggy"); gShowSettings = 1; }
+    if (k3 == 14) { Shot("settings"); gShowSettings = 0; }
+    if (k3 > 16) break;
    }
   }
   if (gMode == 0) {
@@ -1142,7 +1199,7 @@ int main(int argc, char **argv) {
     } else ToastAdd("Start the engine first.", COL_YEL);
    }
    if ((IsKeyPressed(KEY_R) || gBtnRebuild) && gM.failed) { SimReset(&gM, &gS, 1); ToastAdd("Rebuilt. Fresh engine.", COL_GRN); SfxPush(SFX_RATCHET); gWasRunning = 0; gStartedOnce = 0; }
-   if (IsKeyPressed(KEY_G) || IsKeyPressed(KEY_ESCAPE) || gBtnBack) { gMode = 0; gM.dyno = 0; gShowAch = 0; }
+   if (IsKeyPressed(KEY_G) || IsKeyPressed(KEY_ESCAPE) || gBtnBack) { gMode = 0; gM.dyno = 0; gShowAch = 0; for (int i = 0; i < NPUFF; i++) gPuff[i].life = 0; }
    if (!gAutotest) {
     static float lock = 0;
     for (int k = 0; k < 10; k++) if (IsKeyPressed(KEY_ONE + k) || IsKeyPressed(KEY_KP_1 + k)) lock = (k + 1) * 0.1f;
@@ -1156,16 +1213,17 @@ int main(int argc, char **argv) {
    }
    gBtnIgn = gBtnStart = gBtnChoke = gBtnLim = gBtnDyno = gBtnCut = gBtnBack = gStartHeldUI = gBtnRebuild = 0;
    if (gMode == 1) TestUpdate(dt, startHeld, startPress);
-   gDS.span = gM.rpm * 6.f * dt;
+   gDS.span = gSet.blur ? gM.rpm * 6.f * dt : 0;
    gVisAng = gM.angle;
    gDS.fanAng += fminf(gM.rpm * 0.9f / 60.f * 2 * PI * dt, 0.42f);
   }
   // audio params
   AU.rpm = gMode ? gM.rpm : 0; AU.load = gM.load; AU.q = gM.q; AU.knock = gM.knock; AU.spool = gM.spool; AU.boost = gM.boost;
+  AU.engVol = gSet.eng; AU.sfxVol = gSet.sfx; gVolume = gSet.master;
   AU.thr = fmaxf(gM.thrAct, gM.idleOpen); AU.volts = gM.volts; AU.running = gMode && gM.running; AU.cut = gM.cut;
   AU.starter = gMode && gM.starterOn && gM.volts > 9.5f; AU.recoil = gMode && gM.recoilT > 0; AU.volume = gMuted ? 0 : gVolume;
   if (gM.bovCount != AU.bov) AU.bov = gM.bovCount;
-  AU.musicVol = (gMuted || !gMusicOn) ? 0 : gMusicVol * gVolume;
+  AU.musicVol = (gMuted || !gMusicOn) ? 0 : gSet.music * gVolume;
   AU.duck = gMode ? (gM.running ? 0.35f + 0.65f * Clampf(gM.rpm / fmaxf(gS.redline, 1), 0, 1) : 0) : 0;
   UpdateCamera3D(&cam, 1);
   BeginDrawing();
@@ -1175,6 +1233,7 @@ int main(int argc, char **argv) {
   if (gMode == 0) { BuildPanel(sw, sh); SpecCard(sw, sh); ViewBar(sw); if (gShowOverview) Overview(sw, sh); }
   else TestHUD(sw, sh);
   if (gShowAch) AchPanel(sw, sh);
+  if (gShowSettings) SettingsPanel(sw, sh);
   Toasts(sw, dt);
   EndDrawing();
  }

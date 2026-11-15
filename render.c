@@ -46,14 +46,15 @@ static const char *FS_FLOOR =
 static Shader gSh, gFloorSh;
 static Material gMat, gFloorMat;
 static int locEmis, locMetal, locView, locBg, locCtr, locShR;
-static Mesh mCube, mCyl, mSph, mCone, mPlane;
+static Mesh mCube, mCyl, mSph, mCone, mPlane, mPuff;
 static Matrix gBase;
 static Vector3 gNoEmis = {0, 0, 0};
 
 // part groups, for hiding and for the collision solver
-enum { G_BLOCK, G_HEAD, G_PLUG, G_ROT, G_FRONT, G_FLY, G_STARTER, G_ALT, G_INTAKE, G_FILTER, G_SC, G_TURBO, G_CHARGE, G_EXH, G_COOL, G_STAND, G_N };
-static const char *GROUP_NAME[] = {"block","head","plug","crank","front","flywheel","starter","alternator","intake","filter","blower","turbo","charge pipe","exhaust","cooling","stand"};
+enum { G_BLOCK, G_HEAD, G_PLUG, G_ROT, G_FRONT, G_FLY, G_STARTER, G_ALT, G_INTAKE, G_FILTER, G_SC, G_TURBO, G_CHARGE, G_EXH, G_COOL, G_STAND, G_OILSYS, G_N };
+static const char *GROUP_NAME[] = {"block","head","plug","crank","front","flywheel","starter","alternator","intake","filter","blower","turbo","charge pipe","exhaust","cooling","stand","oil system"};
 static int gGroup = 0, gSolving = 0, gHide = 0;
+static unsigned gOnly = 0; static int gAlpha = 0;
 static unsigned gAllow[G_N];
 typedef struct { Matrix m, inv; int mesh, group; Vector3 lo, hi; } Prim;
 #define MAXPRIM 6000
@@ -69,6 +70,7 @@ static void RenderInit(void) {
  gFloorMat = LoadMaterialDefault(); gFloorMat.shader = gFloorSh;
  mCube = GenMeshCube(1, 1, 1); mCyl = GenMeshCylinder(1, 1, 28); mSph = GenMeshSphere(1, 18, 24); mCone = GenMeshCone(1, 1, 28);
  mPlane = GenMeshPlane(200, 200, 1, 1);
+ mPuff = GenMeshSphere(1, 8, 10);
  AllowInit();
 }
 
@@ -79,10 +81,10 @@ static void AllowInit(void) {
  AllowPair(G_BLOCK, G_COOL); AllowPair(G_HEAD, G_PLUG); AllowPair(G_HEAD, G_INTAKE); AllowPair(G_HEAD, G_EXH); AllowPair(G_HEAD, G_COOL);
  AllowPair(G_ROT, G_FRONT); AllowPair(G_ROT, G_FLY); AllowPair(G_FRONT, G_ALT); AllowPair(G_FRONT, G_SC); AllowPair(G_FRONT, G_BLOCK);
  AllowPair(G_INTAKE, G_FILTER); AllowPair(G_INTAKE, G_SC); AllowPair(G_INTAKE, G_CHARGE); AllowPair(G_FILTER, G_TURBO); AllowPair(G_FILTER, G_SC);
- AllowPair(G_TURBO, G_EXH); AllowPair(G_TURBO, G_CHARGE); AllowPair(G_STARTER, G_FLY); AllowPair(G_STARTER, G_BLOCK); AllowPair(G_ALT, G_BLOCK);
+ AllowPair(G_OILSYS, G_BLOCK); AllowPair(G_OILSYS, G_FRONT); AllowPair(G_TURBO, G_EXH); AllowPair(G_TURBO, G_CHARGE); AllowPair(G_STARTER, G_FLY); AllowPair(G_STARTER, G_BLOCK); AllowPair(G_ALT, G_BLOCK);
 }
 
-static int MeshId(Mesh m) { return m.vaoId == mCube.vaoId ? 0 : m.vaoId == mCyl.vaoId ? 1 : m.vaoId == mSph.vaoId ? 2 : 3; }
+static int MeshId(Mesh m) { return m.vaoId == mCube.vaoId ? 0 : m.vaoId == mCyl.vaoId ? 1 : (m.vaoId == mSph.vaoId || m.vaoId == mPuff.vaoId) ? 2 : 3; }
 static void Put(Mesh m, Matrix local, Color c, float metal, Vector3 emis) {
  Matrix w = MatrixMultiply(local, gBase);
  if (gRecord && gNPrim < MAXPRIM) {
@@ -98,6 +100,8 @@ static void Put(Mesh m, Matrix local, Color c, float metal, Vector3 emis) {
   p->lo = lo; p->hi = hi;
  }
  if (gSolving || ((gHide >> gGroup) & 1)) return;
+ if (gOnly && !((gOnly >> gGroup) & 1)) return;
+ if (gAlpha) { c.a = (unsigned char)gAlpha; metal *= 0.5f; }
  gMat.maps[MATERIAL_MAP_DIFFUSE].color = c;
  SetShaderValue(gSh, locMetal, &metal, SHADER_UNIFORM_FLOAT);
  SetShaderValue(gSh, locEmis, &emis, SHADER_UNIFORM_VEC3);
@@ -247,8 +251,9 @@ typedef struct {
  Vector3 inP[16], exP[16], inD[16], exD[16];
  Vector3 exhOut[2], intakeTop, fanC; float fanR, pulR, pulX;
  int nOut, hoseSel[2]; float laneSide[2];
+ int hasTurbo, oilFlip; Vector3 turboPos; float turboK;
  // solver offsets for movable groups
- Vector3 offAlt, offStarter, offTurbo, offFilter, offRad, offLane[2], offSC, offCharge;
+ Vector3 offOil, offAlt, offStarter, offTurbo, offFilter, offRad, offLane[2], offSC, offCharge;
  int solveIters, solveLeft;
 } Geo;
 static Geo G;
@@ -260,7 +265,7 @@ static Color Shade(Color c, float k) { return (Color){(unsigned char)Clampf(c.r 
 static const Color C_STEEL = {150, 152, 158, 255}, C_DARK = {38, 40, 44, 255}, C_BLACK = {24, 25, 28, 255}, C_CHROME = {225, 228, 235, 255};
 static const Color C_RUBBER = {20, 20, 22, 255}, C_PISTON = {200, 200, 205, 255};
 
-typedef struct { int cut; float fanAng; float vis; float glow; float pullT; float span; int oilView; float oilSump, oilHead, oilNeed, oilSupply, oilFlow, oilT; } DrawState;
+typedef struct { int cut; float fanAng; float vis; float glow; float pullT; float span; int oilView; float oilSump, oilHead, oilNeed, oilSupply, oilFlow, oilT; float covMain, covRod, covWall, covHead, covTurbo; } DrawState;
 
 static void GeoBase(const Build *b) {
  Geo *g = &G;
@@ -295,7 +300,7 @@ static void GeoBase(const Build *b) {
  else if (b->layout <= 3) { g->ccW = fmaxf(2 * sinf(half) * g->v0 + b->bore * 1.25f, ccWi); g->ccTop = g->v0 * cosf(half) + b->bore * 0.35f; }
  else { g->ccW = 2 * g->v0 + 24; g->ccTop = g->r * 1.3f + b->bore * 0.45f; }
  g->ccBot = -(g->r * 1.35f + 12);
- g->panH = b->cycle ? 0 : 30 + b->bore * 0.5f;
+ g->panH = b->cycle ? 0 : (30 + b->bore * 0.5f) * (b->lube == 2 ? 0.45f : 1.f);
  float fw = FLY[b->flywheel].magneto ? 0.85f : (FLY[b->flywheel].mul > 1.5f ? 1.15f : 1.f);
  g->flyR = (b->stroke * 0.9f + 70) * fw;
  g->flyT = 18 * FLY[b->flywheel].mul + 8;
@@ -400,126 +405,184 @@ static void DrawSpinning(const Build *b, float crankDeg, const DrawState *ds) {
 static float G_drainVis = 1;
 
 // ===== oil flow view =====
-#define NOILP 260
-typedef struct { int path; float t, spd, life; Vector3 p, v; } OilP;
+// pressure-fed: particles ride gallery paths; splash: droplets bounce inside the crankcase and film back down
+#define NOILP 420
+typedef struct { int path, state; float t, spd, life; Vector3 p, v; } OilP;
 static OilP gOil[NOILP];
-static float gOilClock = 0;
-static Vector3 gOilPath[24][8]; static int gOilPathN[24], gNOilPaths = 0;
+enum { OP_FEED, OP_MAIN, OP_SQUIRT, OP_RISE, OP_DRAIN };
+static Vector3 gOilPath[28][8]; static int gOilPathN[28], gOilKind[28], gNOilPaths = 0;
+static Vector3 gOilFilter;
+static float OilPoolY(const Build *b, const Spec *s, float sump) {
+ Geo *g = &G;
+ float cap = fmaxf(s->oilMax, 0.1f), lvl = Clampf(sump / cap, 0, 1);
+ if (g->panH > 0) return g->ccBot - g->panH + 3 + (g->panH - 6) * lvl;
+ return g->ccBot + 2 + g->r * 0.7f * lvl;
+}
+static void AddOilPath(int kind, Vector3 *pts, int n) { if (gNOilPaths >= 28) return; memcpy(gOilPath[gNOilPaths], pts, sizeof(Vector3) * n); gOilPathN[gNOilPaths] = n; gOilKind[gNOilPaths++] = kind; }
 static void OilPathsBuild(const Build *b) {
  Geo *g = &G; float frontX = -g->L * 0.5f, rearX = g->L * 0.5f, rr = g->r;
  gNOilPaths = 0;
- float poolY = g->panH > 0 ? g->ccBot - g->panH * 0.6f : g->ccBot + 8;
- Vector3 pick = {0, poolY, 0}, pump = {frontX + 28, g->ccBot - 4, 0};
- Vector3 g0 = {frontX + 28, -rr * 0.15f, -g->ccW * 0.32f}, g1 = {rearX - 28, -rr * 0.15f, -g->ccW * 0.32f};
- if (b->lube == 0) return;
- // main gallery feed
- Vector3 *p = gOilPath[gNOilPaths]; int n = 0;
- p[n++] = pick; p[n++] = pump; p[n++] = g0; p[n++] = g1; gOilPathN[gNOilPaths++] = n;
- // main bearings
- for (int i = 0; i < g->n && gNOilPaths < 18; i += (g->nb == 2 ? 2 : 1)) {
-  p = gOilPath[gNOilPaths]; n = 0;
+ memset(gOil, 0, sizeof gOil);
+ if (b->lube == 0 || b->cycle) return;
+ float pickY = g->ccBot - g->panH * 0.75f, galZ = -g->ccW * 0.36f, galY = g->ccBot * 0.35f;
+ gOilFilter = (Vector3){frontX + g->L * 0.25f, galY - 10, -g->ccW * 0.5f - 40};
+ Vector3 feed[6] = {{0, pickY, 0}, {frontX + 30, pickY, 0}, {frontX + 30, g->ccBot - 8, 0}, {frontX + 30, galY, galZ}, {gOilFilter.x, galY - 10, -g->ccW * 0.5f - 18}, {gOilFilter.x + 30, galY, galZ}};
+ AddOilPath(OP_FEED, feed, 6);
+ Vector3 gal[2] = {{gOilFilter.x + 30, galY, galZ}, {rearX - 24, galY, galZ}};
+ AddOilPath(OP_FEED, gal, 2);
+ for (int i = 0; i < g->n; i += (g->nb == 2 ? 2 : 1)) {
   float x = g->x[i];
-  p[n++] = (Vector3){x, -rr * 0.15f, -g->ccW * 0.32f}; p[n++] = (Vector3){x, 0, 0}; p[n++] = (Vector3){x, g->ccBot + 6, g->ccW * 0.2f}; p[n++] = (Vector3){x, poolY, g->ccW * 0.15f};
-  gOilPathN[gNOilPaths++] = n;
+  Vector3 mn[3] = {{x, galY, galZ}, {x, -rr * 0.35f, -rr * 0.4f}, {x, 0, 0}};
+  AddOilPath(OP_MAIN, mn, 3);
+  Vector3 sq[2] = {{x, galY, galZ}, {x, galY + 6, galZ * 0.5f}};
+  AddOilPath(OP_SQUIRT, sq, 2);
  }
- // up to each head, along it, drain back
- for (int bk = 0; bk < g->nb && gNOilPaths < 24; bk++) {
-  float a = g->bankA[bk], x0 = g->bx0[bk] + 10, x1 = g->bx1[bk] - 10;
-  p = gOilPath[gNOilPaths]; n = 0;
-  p[n++] = (Vector3){x0, -rr * 0.15f, -g->ccW * 0.32f};
-  p[n++] = BP(a, x0, g->v0, -g->jw * 0.42f);
-  p[n++] = BP(a, x0, g->deck + g->headH * 0.6f, -g->headW * 0.3f);
-  p[n++] = BP(a, x1, g->deck + g->headH * 0.6f, -g->headW * 0.3f);
-  p[n++] = BP(a, x1, g->deck + g->headH * 0.2f, g->headW * 0.35f);
-  p[n++] = BP(a, x1, g->v0, g->jw * 0.42f);
-  p[n++] = (Vector3){x1, poolY, 0};
-  gOilPathN[gNOilPaths++] = n;
+ for (int bk = 0; bk < g->nb; bk++) {
+  float a = g->bankA[bk], x0 = g->bx0[bk] + 14, x1 = g->bx1[bk] - 14, side = (a > 0.01f) ? 1.f : -1.f;
+  Vector3 up[5] = {{x0, galY, galZ}, BP(a, x0, g->v0 + 6, -side * g->jw * 0.42f), BP(a, x0, g->deck + g->headH * 0.55f, -side * g->headW * 0.3f), BP(a, (x0 + x1) * 0.5f, g->deck + g->headH * 0.6f, -side * g->headW * 0.3f), BP(a, x1, g->deck + g->headH * 0.6f, -side * g->headW * 0.3f)};
+  AddOilPath(OP_RISE, up, 5);
+  Vector3 dr[4] = {BP(a, x1, g->deck + g->headH * 0.6f, side * g->headW * 0.3f), BP(a, x1, g->deck + 4, side * g->headW * 0.38f), BP(a, x1, g->v0, side * g->jw * 0.42f), {x1, g->ccBot - g->panH * 0.5f, side * g->ccW * 0.3f}};
+  AddOilPath(OP_DRAIN, dr, 4);
  }
 }
-static Vector3 OilPathAt(int pi, float t, float *segOut) {
+static float PathLen(int pi) { float L = 0; for (int k = 0; k + 1 < gOilPathN[pi]; k++) L += Vector3Distance(gOilPath[pi][k], gOilPath[pi][k + 1]); return L; }
+static Vector3 OilPathAt(int pi, float t) {
  int n = gOilPathN[pi]; Vector3 *p = gOilPath[pi];
- float tot = 0, len[8];
- for (int i = 0; i + 1 < n; i++) { len[i] = Vector3Distance(p[i], p[i + 1]); tot += len[i]; }
- float d = t * tot;
- for (int i = 0; i + 1 < n; i++) { if (d <= len[i]) { *segOut = (float)i / (n - 1); return Vector3Lerp(p[i], p[i + 1], d / fmaxf(len[i], 1e-3f)); } d -= len[i]; }
- *segOut = 1; return p[n - 1];
+ float d = t * PathLen(pi);
+ for (int i = 0; i + 1 < n; i++) { float l = Vector3Distance(p[i], p[i + 1]); if (d <= l) return Vector3Lerp(p[i], p[i + 1], d / fmaxf(l, 1e-3f)); d -= l; }
+ return p[n - 1];
 }
-static void OilUpdate(const Build *b, const DrawState *ds, float rpm, float dt) {
- gOilClock += dt;
- float spd = Clampf(ds->oilFlow * 2.5f, 0, 1.2f);
+static float Rnd(void) { return (float)GetRandomValue(0, 10000) / 10000.f; }
+static int InsideCase(Vector3 p, float poolY) {
+ Geo *g = &G;
+ if (p.x > -g->L * 0.5f + 4 && p.x < g->L * 0.5f - 4 && fabsf(p.z) < g->ccW * 0.5f - 4 && p.y > poolY && p.y < g->ccTop - 3) return 1;
+ for (int i = 0; i < g->n; i++) {
+  Vector3 d = Vector3Subtract(p, (Vector3){g->x[i], 0, 0});
+  float a = g->a[i];
+  float v = d.y * cosf(a) + d.z * sinf(a), w = -d.y * sinf(a) + d.z * cosf(a);
+  if (v > g->v0 - 10 && v < g->deck && sqrtf(d.x * d.x + w * w) < 0.48f * (G.headW / 1.35f)) return 2;
+ }
+ return 0;
+}
+static void OilUpdate(const Build *b, const Spec *s, const DrawState *ds, float rpm, float crankDeg, float dt) {
+ Geo *g = &G;
+ float poolY = OilPoolY(b, s, ds->oilSump);
+ if (b->lube == 0 || b->cycle) {
+  // splash: dipper on each rod scoops the pool and flings droplets around inside the case
+  float reach = b->cycle ? 1 : ds->oilSupply;
+  float rate = rpm / 60.f * g->n * (b->cycle ? 3.f : 7.f) * reach * dt;
+  int spawn = (int)rate + (Rnd() < rate - (int)rate ? 1 : 0);
+  for (int i = 0; i < NOILP && spawn > 0; i++) {
+   OilP *o = &gOil[i];
+   if (o->life > 0) continue;
+   int c = GetRandomValue(0, g->n - 1);
+   float beta = (crankDeg - g->tdc[c]) * DEG2RAD + g->a[c];
+   float an = beta + PI + (Rnd() - 0.5f) * 0.6f;
+   o->p = (Vector3){g->x[c] + (Rnd() - 0.5f) * 10, fmaxf(g->r * cosf(an) * 0.9f, poolY + 2), g->r * sinf(an) * 0.9f};
+   float sp = Clampf(rpm * 0.18f, 150, 900);
+   Vector3 tang = {0, -sinf(an), cosf(an)};
+   o->v = Vector3Add(Vector3Scale(tang, sp * (Rnd() > 0.5f ? 1 : -1)), (Vector3){(Rnd() - 0.5f) * 120, sp * 0.6f, 0});
+   o->life = 3; o->state = 0; spawn--;
+  }
+  for (int i = 0; i < NOILP; i++) {
+   OilP *o = &gOil[i];
+   if (o->life <= 0) continue;
+   o->life -= dt;
+   if (o->state == 0) {
+    o->v.y -= 3000 * dt;
+    Vector3 np = Vector3Add(o->p, Vector3Scale(o->v, dt));
+    if (!InsideCase(np, poolY - 1)) { o->state = 1; o->v = (Vector3){0, -40 - Rnd() * 50, 0}; if (!InsideCase(o->p, poolY - 1)) o->life = 0; }
+    else o->p = np;
+   } else {
+    Vector3 np = Vector3Add(o->p, Vector3Scale(o->v, dt));
+    if (InsideCase(np, poolY - 1)) o->p = np; else o->life = 0;
+    if (o->p.y <= poolY + 1) o->life = 0;
+   }
+  }
+  return;
+ }
+ if (gNOilPaths == 0) return;
+ float spd = Clampf(ds->oilFlow * 6.f, 0, 2.2f);
  for (int i = 0; i < NOILP; i++) {
   OilP *o = &gOil[i];
-  if (b->lube == 0 || b->cycle) {
-   // splash: droplets flung off the crank, fall back
-   if (o->life <= 0) {
-    if (rpm < 60 || (float)GetRandomValue(0, 1000) / 1000.f > ds->oilSupply * 0.6f + 0.1f) continue;
-    int c = GetRandomValue(0, G.n - 1);
-    float an = (float)GetRandomValue(0, 628) / 100.f, sp = 300 + rpm * 0.12f;
-    o->p = (Vector3){G.x[c], -G.r * 0.6f, 0}; o->v = (Vector3){0, sinf(an) * sp * 0.6f + sp * 0.5f, cosf(an) * sp * 0.6f}; o->life = 0.6f;
-   }
-   o->v.y -= 2400 * dt; o->p = Vector3Add(o->p, Vector3Scale(o->v, dt)); o->life -= dt;
-   if (o->p.y < G.ccBot - G.panH * 0.5f) o->life = 0;
-  } else {
-   if (gNOilPaths == 0) continue;
-   if (o->life <= 0) { o->path = GetRandomValue(0, gNOilPaths - 1); o->t = (float)GetRandomValue(0, 1000) / 1000.f; o->life = 1; o->spd = 0.6f + 0.6f * GetRandomValue(0, 100) / 100.f; }
-   float L = 0; for (int k = 0; k + 1 < gOilPathN[o->path]; k++) L += Vector3Distance(gOilPath[o->path][k], gOilPath[o->path][k + 1]);
-   float slow = 1;
-   if (gOilPathN[o->path] == 7) { float seg; OilPathAt(o->path, o->t, &seg); if (seg > 0.55f) slow = Clampf(G_drainVis, 0.03f, 1); }
-   o->t += spd * slow * o->spd * 220.f / fmaxf(L, 1) * dt;
-   if (o->t >= 1) o->t -= 1;
-   float seg; o->p = OilPathAt(o->path, o->t, &seg);
+  if (o->life <= 0) {
+   o->path = i % gNOilPaths; o->t = Rnd(); o->life = 1; o->spd = 0.75f + 0.5f * Rnd(); o->state = 0;
   }
+  int kind = gOilKind[o->path];
+  float mul = kind == OP_DRAIN ? Clampf(G_drainVis, 0.03f, 1) * 0.6f : (kind == OP_SQUIRT ? 2.2f : 1.f);
+  if (kind == OP_DRAIN && spd < 0.05f && rpm < 50) mul = 0.15f * Clampf(G_drainVis, 0.03f, 1);
+  o->t += (kind == OP_DRAIN ? fmaxf(spd, 0.25f) : spd) * mul * o->spd * 260.f / fmaxf(PathLen(o->path), 1) * dt;
+  if (o->t >= 1) o->t -= 1;
+  o->p = OilPathAt(o->path, o->t);
+  if (kind == OP_SQUIRT) { float k = o->t; o->p.y += k * k * 60; }
  }
 }
 static void DrawOil(const Build *b, const Spec *s, float crankDeg, const DrawState *ds) {
  Geo *g = &G;
  int sg = gGroup; gGroup = G_ROT;
- Color amber = {214, 150, 32, 255}, dark = {150, 95, 20, 235}, air = {235, 235, 240, 255};
- float frontX = -g->L * 0.5f;
- // sump pool (surface stays level)
- float cap = fmaxf(s->oilMax, 0.1f);
- float lvl = Clampf(ds->oilSump / cap, 0, 1);
- if (g->panH > 0) {
-  float h = (g->panH - 6) * lvl;
-  if (h > 1) Box((Vector3){0, g->ccBot - g->panH + 3 + h * 0.5f, 0}, (Vector3){g->L * 0.8f, h, g->ccW * 0.78f}, MatrixIdentity(), dark, 0.2f);
-  float mh = (g->panH - 6) * (s->oilNeed * 0.55f / cap);
-  Box((Vector3){frontX + g->L * 0.09f + 1, g->ccBot - g->panH + 3 + mh, g->ccW * 0.39f + 2}, (Vector3){6, 2, 6}, MatrixIdentity(), (Color){235, 70, 55, 255}, 0);
- } else if (!b->cycle) {
-  float h = fmaxf((g->r * 0.6f) * lvl, 0);
-  if (h > 1) Box((Vector3){0, g->ccBot + h * 0.5f + 2, -g->ccW * 0.2f}, (Vector3){g->L * 0.85f, h, g->ccW * 0.35f}, MatrixIdentity(), dark, 0.2f);
+ Color amber = {226, 158, 34, 255}, deep = {150, 92, 18, 255}, tube = {120, 78, 20, 255}, air = {240, 240, 245, 255};
+ float hot = Clampf((ds->oilT - 40) / 100.f, 0, 1);
+ amber = (Color){(unsigned char)Lerpf(226, 160, hot), (unsigned char)Lerpf(158, 90, hot), (unsigned char)Lerpf(34, 20, hot), 255};
+ float poolY = OilPoolY(b, s, ds->oilSump);
+ float floorY = g->panH > 0 ? g->ccBot - g->panH + 3 : g->ccBot + 2;
+ if (poolY - floorY > 0.5f) {
+  float w = g->panH > 0 ? g->ccW * 0.78f : g->ccW * 0.9f, l = g->panH > 0 ? g->L * 0.8f : g->L * 0.94f;
+  Box((Vector3){0, (poolY + floorY) * 0.5f, 0}, (Vector3){l, poolY - floorY, w}, MatrixIdentity(), deep, 0.25f);
  }
- // pickup + pump
- if (b->lube > 0) {
-  float poolY = g->ccBot - g->panH * 0.6f;
-  Cyl((Vector3){0, poolY, 0}, (Vector3){frontX + 28, g->ccBot - 4, 0}, 6, ds->oilSupply < 0.7f ? (Color){235, 70, 55, 255} : C_STEEL, 0.6f);
-  Box((Vector3){frontX + 28, g->ccBot + 6, 0}, (Vector3){30, 24, 40}, MatrixIdentity(), C_STEEL, 0.6f);
+ if (b->lube > 0 && !b->cycle) {
+  for (int p = 0; p < gNOilPaths; p++) for (int k = 0; k + 1 < gOilPathN[p]; k++)
+   Cyl(gOilPath[p][k], gOilPath[p][k + 1], gOilKind[p] == OP_DRAIN ? 5.f : 3.5f, tube, 0.3f);
+  for (int p = 0; p < gNOilPaths; p++) for (int k = 1; k + 1 < gOilPathN[p]; k++) Sph(gOilPath[p][k], gOilKind[p] == OP_DRAIN ? 5.f : 3.5f, tube, 0.3f);
+  Cyl((Vector3){g->L * -0.5f + 30, g->ccBot - 18, -20}, (Vector3){g->L * -0.5f + 30, g->ccBot + 14, -20}, 22, (Color){90, 92, 98, 255}, 0.6f);
+  Cyl((Vector3){0, g->ccBot - g->panH + 5, 0}, (Vector3){0, g->ccBot - g->panH * 0.75f, 0}, 16, ds->oilSupply < 0.7f ? (Color){235, 70, 55, 255} : (Color){80, 82, 88, 255}, 0.5f);
  }
- // oil held up in the heads
- if (ds->oilHead > 0.01f && b->lube > 0) {
+ if (ds->oilHead > 0.01f && b->lube > 0 && !b->cycle) {
   float hf = Clampf(ds->oilHead / fmaxf(s->oilHeadCap, 0.05f), 0, 1);
   for (int bk = 0; bk < g->nb; bk++) {
    float a = g->bankA[bk], xm = (g->bx0[bk] + g->bx1[bk]) * 0.5f, len = g->bx1[bk] - g->bx0[bk];
    float hh = g->headH * 0.8f * hf;
-   if (hh > 1) Box(BP(a, xm, g->deck + 2 + hh * 0.5f, 0), (Vector3){len, hh, g->headW * 0.85f}, MatrixRotateX(a), amber, 0.3f);
+   if (hh > 1) Box(BP(a, xm, g->deck + 2 + hh * 0.5f, 0), (Vector3){len - 8, hh, g->headW * 0.8f}, MatrixRotateX(a), deep, 0.3f);
   }
  }
- // dry sump tank
- if (b->lube == 2) {
-  Vector3 tk = {0, g->ccTop * 0.3f, -(g->ccW * 0.5f + 110)};
-  Cyl((Vector3){tk.x, tk.y - 120, tk.z}, (Vector3){tk.x, tk.y + 120, tk.z}, 55, (Color){60, 62, 68, 255}, 0.7f);
-  Vector3 l1[3] = {{0, g->ccBot - g->panH + 8, -g->ccW * 0.38f}, {0, g->ccBot - g->panH + 8, tk.z + 40}, {0, tk.y - 100, tk.z + 40}};
-  Pipe(l1, 3, 7, (Color){60, 60, 66, 255}, 0.4f, gNoEmis);
+ if (b->lube == 0 && !b->cycle) {
+  for (int i = 0; i < g->n; i++) {
+   float a = g->a[i], beta = (crankDeg - g->tdc[i]) * DEG2RAD + a;
+   Vector3 pin = {g->x[i] + b->bore * 0.12f, g->r * cosf(beta), g->r * sinf(beta)};
+   Vector3 dir = Vector3Normalize((Vector3){0, cosf(beta), sinf(beta)});
+   Cyl(pin, Vector3Add(pin, Vector3Scale(dir, g->r * 0.75f)), 3.5f, (Color){170, 172, 178, 255}, 0.8f);
+  }
  }
- // particles
+// coverage heat: green well oiled, orange marginal, red dry
+ {
+#define COV(v) ((v) > 0.75f ? (Color){70, 210, 100, 255} : ((v) > 0.4f ? (Color){245, 150, 40, 255} : (Color){235, 55, 45, 255}))
+  float rr = g->r;
+  for (int i = 0; i < g->n; i += (g->nb == 2 ? 2 : 1)) {
+   float x = g->x[i] + (g->nb == 2 ? g->pitch * 0.12f : 0), cw = b->bore * 0.12f;
+   Cyl((Vector3){x - cw, 0, 0}, (Vector3){x + cw, 0, 0}, fmaxf(rr * 0.45f, 9) + 3, COV(ds->covMain), 0.2f);
+  }
+  for (int i = 0; i < g->n; i++) {
+   float a = g->a[i], beta = (crankDeg - g->tdc[i]) * DEG2RAD + a, th = beta - a;
+   Vector3 pin = {g->x[i], rr * cosf(beta), rr * sinf(beta)};
+   float cw = g->nb == 2 ? fminf(b->bore * 0.22f, g->pitch * 0.105f) : b->bore * 0.22f;
+   Cyl((Vector3){pin.x - cw * 0.5f, pin.y, pin.z}, (Vector3){pin.x + cw * 0.5f, pin.y, pin.z}, fmaxf(rr * 0.32f, 6) + 3, COV(ds->covRod), 0.2f);
+   float sv = rr * cosf(th) + sqrtf(fmaxf(g->l * g->l - rr * rr * sinf(th) * sinf(th), 1));
+   Cyl(BP(a, g->x[i], sv - b->bore * 0.28f, 0), BP(a, g->x[i], sv - b->bore * 0.05f, 0), b->bore * 0.5f, COV(ds->covWall), 0.2f);
+  }
+  if (!b->cycle) for (int bk = 0; bk < g->nb; bk++) {
+   float a = g->bankA[bk], xm = (g->bx0[bk] + g->bx1[bk]) * 0.5f, len = g->bx1[bk] - g->bx0[bk];
+   Box(BP(a, xm, g->deck + g->headH * 0.75f, 0), (Vector3){len - 12, g->headH * 0.35f, g->headW * 0.5f}, MatrixRotateX(a), COV(ds->covHead), 0.2f);
+  }
+  if (g->hasTurbo) { Vector3 c = g->turboPos; float k = g->turboK; Cyl((Vector3){c.x + 18 * k, c.y, c.z}, (Vector3){c.x + 64 * k, c.y, c.z}, 30 * k, COV(ds->covTurbo), 0.2f); }
+#undef COV
+ }
  for (int i = 0; i < NOILP; i++) {
   OilP *o = &gOil[i];
-  if (o->life <= 0 && (b->lube == 0 || b->cycle)) continue;
-  if (b->lube > 0 && !b->cycle && gNOilPaths == 0) continue;
-  int bubbly = b->lube > 0 && ds->oilSupply < 0.75f && (i % 4) < (int)((1 - ds->oilSupply) * 6);
-  Sph(o->p, b->lube == 0 || b->cycle ? 3.f : 4.5f, bubbly ? air : amber, 0.4f);
+  if (o->life <= 0) continue;
+  int bubbly = b->lube > 0 && !b->cycle && ds->oilSupply < 0.75f && (i % 5) < (int)((1 - ds->oilSupply) * 7);
+  float rad = (b->lube == 0 || b->cycle) ? (o->state ? 2.2f : 2.8f) : 3.2f;
+  Sph(o->p, rad, bubbly ? air : amber, 0.5f);
  }
  gGroup = sg;
- (void)crankDeg;
 }
 
 static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState *ds) {
@@ -637,7 +700,7 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
  gGroup = G_FLY;
  if (st->elec) {
   gGroup = G_STARTER;
-  float sr = 22 + 7 * st->power;
+  float sr = 20 + 12 * sqrtf(st->power);
   Vector3 sc = Vector3Add((Vector3){rearX - 40, -g->flyR * 0.55f, -(g->flyR * 0.72f + 10)}, g->offStarter);
   Cyl((Vector3){sc.x - 50, sc.y, sc.z}, (Vector3){sc.x + 55, sc.y, sc.z}, sr, C_BLACK, 0.4f);
   Cyl((Vector3){sc.x - 30, sc.y + sr + 14, sc.z}, (Vector3){sc.x + 30, sc.y + sr + 14, sc.z}, 16, C_STEEL, 0.6f);
@@ -724,7 +787,7 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   bankLow[g->bank[i]] = fminf(bankLow[g->bank[i]], p1.y);
   sideExt = fmaxf(sideExt, fabsf(p1.z));
  }
- g->nOut = 0;
+ g->nOut = 0; g->hasTurbo = 0;
  for (int bk = 0; bk < g->nb; bk++) {
   int first = -1;
   for (int i = 0; i < g->n; i++) if (g->bank[i] == bk) { first = i; break; }
@@ -775,6 +838,7 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
     else tc = Vector3Add((Vector3){lanePt[bk].x - 30 + (g->nb == 1 && twins == 2 ? (t ? 1 : -1) * g->L * 0.25f : 0), lanePt[bk].y + 120 * k, lanePt[bk].z + sz * 70 * k}, g->offTurbo);
     Vector3 cOut, cIn, tIn, tOut;
     gGroup = G_TURBO;
+    if (t == 0) { g->hasTurbo = 1; g->turboPos = tc; g->turboK = k; }
     DrawTurbo(tc, k, &cOut, &cIn, &tIn, &tOut);
     gGroup = G_EXH;
     if (g->nb == 2 && twins == 1) {
@@ -832,6 +896,43 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
    }
   }
   g->nOut = nOut;
+ }
+ // ---- lubrication hardware
+ if (!b->cycle) {
+  gGroup = G_OILSYS;
+  float sideO = -1.f;
+  for (int i = 0; i < g->n; i++) if (g->exD[i].z < -0.3f) sideO = 1.f;
+  if (g->oilFlip) sideO = -sideO;
+  if (b->lube == 0) {
+   Vector3 dp = Vector3Add((Vector3){frontX + g->L * 0.2f, g->ccTop - 6, sideO * g->ccW * 0.3f}, g->offOil);
+   Cyl(dp, Vector3Add(dp, (Vector3){0, 34, sideO * 10}), 7, C_DARK, 0.4f);
+   Cyl(Vector3Add(dp, (Vector3){0, 32, sideO * 9}), Vector3Add(dp, (Vector3){0, 44, sideO * 13}), 12, (Color){240, 200, 30, 255}, 0.1f);
+  } else {
+   float pR = rr * 0.8f + 28;
+   Vector3 fp = Vector3Add((Vector3){frontX + 4, -(pR + 46), g->ccW * 0.18f * sideO}, g->offOil);
+   Cyl((Vector3){fp.x + 6, fp.y, fp.z}, (Vector3){fp.x - 16, fp.y, fp.z}, 30, C_STEEL, 0.6f);
+   Cyl((Vector3){fp.x - 14, fp.y, fp.z}, (Vector3){fp.x - 92, fp.y, fp.z}, 36, (Color){30, 60, 160, 255}, 0.3f);
+   if (b->lube == 2) {
+    float fxe = rearX + 12 + g->flyT;
+    Vector3 tk = Vector3Add((Vector3){fxe + 80, g->flyR * 0.15f, 0}, (Vector3){fmaxf(g->offOil.x, 0), 0, 0});
+    Cyl((Vector3){tk.x, tk.y - 120, tk.z}, (Vector3){tk.x, tk.y + 110, tk.z}, 55, (Color){60, 62, 68, 255}, 0.7f);
+    Cyl((Vector3){tk.x, tk.y + 108, tk.z}, (Vector3){tk.x, tk.y + 126, tk.z}, 20, C_CHROME, 0.9f);
+    float ly = g->ccBot - g->panH - 34;
+    Vector3 l1[4] = {{g->L * 0.3f, g->ccBot - g->panH + 4, 18}, {g->L * 0.3f, ly, 18}, {tk.x - 30, ly, 18}, {tk.x - 30, tk.y - 118, 18}};
+    Pipe(l1, 4, 8, C_RUBBER, 0.2f, gNoEmis);
+    Vector3 l2[4] = {{tk.x - 30, tk.y - 118, -18}, {tk.x - 30, ly, -18}, {fp.x - 50, ly, -18}, {fp.x - 50, fp.y - 34, -18}};
+    Pipe(l2, 4, 8, C_RUBBER, 0.2f, gNoEmis);
+   }
+   if (b->oilCooler) {
+    Vector3 oc = {frontX - 40, fp.y - 95, 0};
+    Box(oc, (Vector3){150, 22, 170}, MatrixIdentity(), (Color){50, 52, 56, 255}, 0.5f);
+    for (int k = -3; k <= 3; k++) Box((Vector3){oc.x + k * 20.f, oc.y - 12, 0}, (Vector3){4, 4, 164}, MatrixIdentity(), (Color){80, 82, 86, 255}, 0.4f);
+    Vector3 c1[2] = {{fp.x - 30, fp.y - 30, fp.z + 14}, {fp.x - 30, oc.y + 8, fp.z + 14}};
+    Pipe(c1, 2, 6, C_RUBBER, 0.2f, gNoEmis);
+    Vector3 c2[2] = {{fp.x - 70, fp.y - 30, fp.z - 14}, {fp.x - 70, oc.y + 8, fp.z - 14}};
+    Pipe(c2, 2, 6, C_RUBBER, 0.2f, gNoEmis);
+   }
+  }
  }
  // ---- radiator + fan
  g->fanR = 0;
@@ -900,7 +1001,7 @@ static void DrawStand(const Geo *g) {
 
 // layout solver: draw invisibly, find group overlaps, push movable parts out
 static int MoverOf(int a, int b) {
- static const int rank[G_N] = {0, 0, 0, 0, 0, 0, 6, 6, 0, 4, 2, 4, 4, 2, 7, 0};
+ static const int rank[G_N] = {0, 0, 0, 0, 0, 0, 6, 6, 0, 4, 2, 4, 4, 2, 7, 0, 6};
  if (a == G_COOL || b == G_COOL) return G_COOL;
  return rank[a] >= rank[b] ? a : b;
 }
@@ -929,6 +1030,7 @@ static void SolveLayout(const Build *b, const Spec *s) {
    case G_CHARGE: g->offCharge.y += st; moved = 1; break;
    case G_SC: g->offSC.y += st; moved = 1; break;
    case G_COOL: g->offRad.x -= st; moved = 1; break;
+   case G_OILSYS: if (!g->oilFlip && g->offOil.x > 50) { g->oilFlip = 1; g->offOil = (Vector3){0}; } else { g->offOil.y -= st * 0.5f; g->offOil.x += st * 0.6f; } moved = 1; break;
    case G_EXH: { static int flip = 0; flip ^= 1; for (int bk = 0; bk < 2; bk++) { if (flip) g->offLane[bk].y -= st; else g->offLane[bk].z += (g->laneSide[bk] >= 0 ? 1 : -1) * st; } moved = 1; } break;
    default: break;
    }
@@ -939,6 +1041,7 @@ static void SolveLayout(const Build *b, const Spec *s) {
   g->offFilter.x = fminf(g->offFilter.x, 200); g->offRad.x = fmaxf(g->offRad.x, -300);
   g->offCharge.y = fminf(g->offCharge.y, 200); g->offSC.y = fminf(g->offSC.y, 160);
   g->offStarter.y = fmaxf(g->offStarter.y, -150); g->offStarter.z = fmaxf(g->offStarter.z, -200);
+  g->offOil.y = fmaxf(g->offOil.y, -200); g->offOil.x = fminf(g->offOil.x, 300);
   g->offAlt.y = Clampf(g->offAlt.y, -150, 150); g->offAlt.z = Clampf(g->offAlt.z, -150, 150);
   if (!moved) break;
  }
@@ -966,7 +1069,7 @@ static void DrawFloor(Vector3 bg, Vector3 ctr, float r) {
 
 // smoke
 typedef struct { Vector3 p, v; float life, max, size; Color c; } Puff;
-#define NPUFF 900
+#define NPUFF 2600
 static Puff gPuff[NPUFF];
 static void PuffAdd(Vector3 p, Vector3 v, float life, float size, Color c) {
  for (int i = 0; i < NPUFF; i++) if (gPuff[i].life <= 0) { gPuff[i] = (Puff){p, v, life, life, size, c}; return; }
@@ -975,7 +1078,7 @@ static void PuffUpdate(float dt) {
  for (int i = 0; i < NPUFF; i++) if (gPuff[i].life > 0) {
   Puff *p = &gPuff[i];
   p->life -= dt; p->p = Vector3Add(p->p, Vector3Scale(p->v, dt));
-  p->v.y += 0.25f * dt; p->v = Vector3Scale(p->v, 1 - 0.8f * dt);
+  p->v.y += 0.35f * dt; p->v = Vector3Scale(p->v, 1 - 0.6f * dt);
  }
 }
 static void PuffDraw(void) {
@@ -985,7 +1088,8 @@ static void PuffDraw(void) {
   Puff *p = &gPuff[i];
   float t = 1 - p->life / p->max;
   Color c = p->c; c.a = (unsigned char)(c.a * (1 - t) * (1 - t));
-  Sph(p->p, p->size * (0.4f + 1.6f * t), c, 0);
+  float rs = p->size * (0.4f + 2.2f * t);
+  Put(mPuff, MatrixMultiply(MatrixScale(rs, rs, rs), MatrixTranslate(p->p.x, p->p.y, p->p.z)), c, 0, gNoEmis);
  }
  gBase = save;
  rlEnableDepthMask();

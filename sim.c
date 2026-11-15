@@ -52,8 +52,10 @@ static const StarterDef STARTERS[] = {
  {"Auto starter 1.2 kW",    1, 0.8f, 4.5f,  1.2f, 0, 1, 160, "Car starter for 0.8-4.5 L. Needs a ring-gear flywheel."},
  {"Gear-reduction 2.0 kW",  1, 2.0f, 8.0f,  2.0f, 0, 1, 260, "High-torque starter for 2-8 L. Needs a ring-gear flywheel."},
  {"Heavy-duty 4.5 kW",      1, 4.0f, 16.f,  4.5f, 0, 1, 480, "Truck/diesel starter for 4-16 L. Needs a ring-gear flywheel."},
+ {"Industrial 9 kW",        1, 8.0f, 25.f,  9.0f, 0, 1, 1100, "Marine/industrial starter for 8-25 L. Needs a ring-gear flywheel."},
+ {"Air starter 20 kW",      1, 15.f, 40.f, 20.0f, 0, 1, 2600, "Compressed-air turbine starter for 15-40 L monsters. Needs a ring-gear flywheel."},
 };
-#define NSTART 7
+#define NSTART 9
 typedef struct { const char *name; float amps, minL; int stator; float cost; const char *tip; } AltDef;
 static const AltDef ALTS[] = {
  {"None",                  0,   0,    0,   0, "No charging. Magneto still makes spark on small-engine flywheels."},
@@ -72,7 +74,7 @@ static const CarbDef CARBS[] = {
 typedef struct { const char *name; float lbhr, cost; } InjDef;
 static const InjDef INJ[] = {
  {"19 lb/hr", 19, 30}, {"24 lb/hr", 24, 35}, {"30 lb/hr", 30, 45}, {"42 lb/hr", 42, 60}, {"60 lb/hr", 60, 80},
- {"80 lb/hr", 80, 110}, {"120 lb/hr", 120, 160}, {"220 lb/hr", 220, 260}, {"600 lb/hr nitro", 600, 600},
+ {"80 lb/hr", 80, 110}, {"120 lb/hr", 120, 160}, {"220 lb/hr", 220, 260}, {"1500 lb/hr nitro", 1500, 900},
 };
 #define NINJ 9
 static const char *LUBES[] = {"Splash (dipper)", "Wet sump + pump", "Dry sump"};
@@ -174,8 +176,8 @@ static const Build PRESETS[] = {
  {0,5,1,6, 107,124,17.3f, 2,2,5, 1,2,0, 3,1,2,26,1, 2,0,6,4,3,50, "Diesel Truck 6.7", 0, 6,4,3, 1,11.5f,1},
  {0,1,2,12, 95,76.4f,12.5f, 1,2,4, 3,2,3, 3,3,0,0,0, 2,2,5,4,0,50, "V12 Exotic 6.5", 0, 6,4,3, 2,10.f,1},
  {0,1,4,4, 85.5f,69,8.5f, 3,0,2, 1,0,1, 0,1,0,0,0, 0,0,4,3,4,50, "Air-cooled Flat-4", 0, 3,0,3, 1,2.5f,1},
- {0,6,3,8, 106.4f,114.3f,6.0f, 4,3,4, 1,0,3, 4,0,4,14,0, 2,2,6,0,4,50, "Nitro Dragster", 0, 6,8,3, 2,14.f,0},
- {0,0,0,1, 70,54,8.5f, 1,0,1, 1,0,0, 0,1,0,0,0, 0,0,1,0,2,50, "Buggy 212cc", 15, 1,0,0, 0,0.6f,0},
+ {0,6,3,8, 106.4f,114.3f,6.0f, 4,3,4, 1,0,3, 4,3,4,14,1, 2,2,6,3,4,50, "Nitro Dragster", 0, 6,8,3, 2,14.f,1},
+ {0,0,0,1, 70,55,8.5f, 1,0,1, 1,0,0, 0,1,0,0,0, 0,0,1,0,2,50, "Buggy 212cc", 15, 1,0,3, 0,0.6f,0},
 };
 #define NPRESET 9
 
@@ -265,7 +267,7 @@ static int PartStatus(const Build *b, const Spec *s, int cat, char *why, int n) 
  case P_BLOCK: {
   const BlockDef *bd = &BLOCKS[b->block];
   if (s->dispL > bd->maxL) { snprintf(why, n, "%s is unviable at %.1f L (max ~%.1f L): too weak at that size.", bd->name, s->dispL, bd->maxL); return 3; }
-  if (s->blockEff < bd->str * 0.75f) { snprintf(why, n, "Big casting: strength down to %.0f%% of a small one.", 100 * s->blockEff / bd->str); return 1; }
+  if (s->blockEff < bd->str * 0.65f) { snprintf(why, n, "Big casting: strength down to %.0f%% of a small one.", 100 * s->blockEff / bd->str); return 1; }
   return 0; }
  case P_FLY: {
   const FlyDef *f = &FLY[b->flywheel];
@@ -506,7 +508,7 @@ static int BuildWarnings(const Build *b, const Spec *s, char out[][96], int *sev
  if (s->estImep > s->pLimit) W(2, "Cylinder pressure %.0f bar > block/internals limit %.0f.", s->estImep, s->pLimit);
  else if (s->estImep > s->pLimit * 0.9f) W(1, "Cylinder pressure near the %.0f bar limit.", s->pLimit);
  if (b->forced && !b->intercooler && b->boost > 8 && !f->diesel) W(1, "No intercooler: hot charge, more knock.");
- if (s->estHp * 745.7f * 0.85f > s->coolCap * 1.1f) W(1, "Cooling is marginal for sustained full load.");
+ if (s->estHp * 745.7f * 0.4f > s->coolCap * 1.1f) W(1, "Cooling is marginal for sustained full load.");
  if (b->filter == 0) W(1, "No air filter: dirt will score the cylinders.");
  if (b->cycle == 0 && b->exhaust == 3) W(1, "Expansion chambers only help 2-strokes.");
  if (b->cycle == 0 && fabsf(b->tilt) > 50) W(1, "Cylinders laid over %.0f deg: wet sump drains badly.", fabsf(b->tilt));
@@ -748,7 +750,7 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
   if (b->cycle == 0 && b->lube == 0 && m->oilSplash < 0.6f && rpm > 2000) m->dmgRate[DMG_OILP] = (0.6f - m->oilSplash) * 12.f * rpm / 4000.f;
   if (b->cycle == 0 && m->oilT > 150) m->dmgRate[DMG_OILP] += (m->oilT - 150) * 0.5f;
   if (b->cycle == 1 && s->lube < 0.6f) m->dmgRate[DMG_LUBE] = (0.6f - s->lube) * Clampf(t.af, 0.1f, 1) * rpm / 6000.f * 40.f;
-  m->dmgRate[DMG_DIRT] = FILTERS[b->filter].dirt * t.af * rpm / 6000.f * 2.5f;
+  m->dmgRate[DMG_DIRT] = FILTERS[b->filter].dirt * t.af * rpm / 6000.f * (b->filter == 0 ? 2.5f : 0.06f);
   if (b->forced && b->boost > FORCED[b->forced].maxb) m->dmgRate[DMG_TURBO] = m->spool * (b->boost / FORCED[b->forced].maxb - 1) * 25.f;
   if (rpm > FLY[b->flywheel].maxRpm) m->dmgRate[DMG_FLY] = (rpm / FLY[b->flywheel].maxRpm - 1) * 700.f + 3.f;
   if (m->lean > 1.02f && !f->diesel) m->dmgRate[DMG_LEAN] = (m->lean - 1) * 70.f;
@@ -767,11 +769,10 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  if (m->running && m->thrAct > 0.9f) m->wotTime += dt; else m->wotTime = 0;
  if (rpm > m->maxRpm) m->maxRpm = rpm;
  if (m->dyno) {
-  if (m->dynoTarget < m->dynoStart + 250) { m->dSum = 0; m->dCnt = 0; } else {
-   m->dSum += m->tbrake; m->dCnt++;
-   float br = m->dSum / m->dCnt;
-   if (m->nd < 400 && (m->nd == 0 || rpm - m->drpm[m->nd - 1] >= 50) && m->dCnt >= 30 + 2400 / b->cyl) {
-    m->dSum = 0; m->dCnt = 0;
+  if (m->dynoTarget < m->dynoStart + 250) { m->dSum = m->tbrake; m->dCnt = 0; } else {
+   m->dSum += (m->tbrake - m->dSum) * Clampf(dt / (0.03f + 0.25f / b->cyl), 0, 1); m->dCnt++;
+   float br = m->dSum;
+   if (m->nd < 400 && (m->nd == 0 || rpm - m->drpm[m->nd - 1] >= 50) && m->dCnt > 60) {
     m->drpm[m->nd] = rpm; m->dtq[m->nd] = br; m->dhp[m->nd] = br * rpm / 7121.f; m->nd++;
     if (br * rpm / 7121.f > m->dynoPeakHp) m->dynoPeakHp = br * rpm / 7121.f;
     if (br > m->dynoPeakTq) m->dynoPeakTq = br;
