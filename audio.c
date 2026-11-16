@@ -25,7 +25,7 @@ static inline float BqRun(Bq *q, float x) {
 
 typedef struct {
  volatile float rpm, load, q, knock, spool, boost, thr, volts, vcylL, volume, egt, temp;
- volatile int running, ncyl, two, exhaust, diesel, forced, starter, recoil, bov, bang, cut, filter, valvetrain, nb, click, failed, intercooler;
+ volatile int cam; volatile int running, ncyl, two, exhaust, diesel, forced, starter, recoil, bov, bang, cut, filter, valvetrain, nb, click, failed, intercooler;
  float fire[16]; int bank[16]; float gain[16]; float delay[16];
  volatile float musicVol, duck, engVol, sfxVol;
  volatile int sfxHead; int sfxQ[32];
@@ -41,6 +41,8 @@ static struct {
  float eS[2], eB[2], eN[2], eI, clat[2];
  float comb[2][COMB]; int ci;
  Bq body[2], ring[2], lp[2], lp2[2], intake, intakeLP, hiss, bovf, rope, bangf, clatHP, mechBP;
+ Bq inRes, subLP, flutBP, starterBP, rvLP[8];
+ float eIimp, sub, flutEnv, flutPh, rvC[8][1700], rvA[4][700]; int rvI[8], rvAi[4];
  float turboPh, scPh, stPh, gearPh, tick, ping, pingPh, bovEnv, bangEnv, ropeEnv, clickEnv, crackle, smoothRpm, smoothLoad;
  int lastBov, lastBang, lastClick;
  unsigned rng;
@@ -182,9 +184,15 @@ static void AudioCB(void *buf, unsigned int frames) {
  BqBP(&SY.bovf, 2300, 1.2f);
  BqBP(&SY.rope, 1400, 2.0f);
  BqLP(&SY.bangf, 700, 0.9f);
- BqHP(&SY.clatHP, 1800, 0.8f);
+ BqBP(&SY.clatHP, 2400, 1.1f);
  BqBP(&SY.mechBP, 1400 + rpmT * 0.05f, 0.9f);
- if (AU.bov != SY.lastBov) { SY.lastBov = AU.bov; SY.bovEnv = Clampf(AU.boost / 12.f, 0.3f, 1); }
+ BqBP(&SY.inRes, 160 + rpmT * 0.035f, 5.0f);
+ BqLP(&SY.subLP, 70 + rpmT * 0.008f, 0.8f);
+ BqBP(&SY.flutBP, 900, 1.4f);
+ BqBP(&SY.starterBP, 2400, 3.0f);
+ for (int k = 0; k < 8; k++) BqLP(&SY.rvLP[k], 3200, 0.6f);
+ float cold = Clampf((60.f - AU.temp) / 45.f, 0, 1);
+ if (AU.bov != SY.lastBov) { SY.lastBov = AU.bov; SY.bovEnv = Clampf(AU.boost / 12.f, 0.3f, 1); if (AU.spool > 0.45f) SY.flutEnv = AU.spool; }
  if (AU.bang != SY.lastBang) { SY.lastBang = AU.bang; SY.bangEnv = 1.0f; }
  if (AU.click != SY.lastClick) { SY.lastClick = AU.click; SY.clickEnv = 1.0f; }
  while (gSfxTail != AU.sfxHead) { SfxStart(AU.sfxQ[gSfxTail & 31]); gSfxTail++; }
@@ -209,7 +217,11 @@ static void AudioCB(void *buf, unsigned int frames) {
     int bk = AU.bank[k] & 1;
     long long when = SY.n + (long long)(AU.delay[k] * SR);
     if (AU.running && !AU.cut && Rnd01() < q) {
-     float A = size * (0.12f + 0.88f * powf(Clampf(load, 0, 1.3f), 1.3f)) * AU.gain[k];
+     float A = size * (0.24f + 0.76f * powf(Clampf(load, 0, 1.3f), 1.3f)) * AU.gain[k];
+     // cycle-to-cycle variation: rougher when cold, lumpy at idle with a big cam
+     float lope = AU.two ? 0 : (AU.cam >= 2 ? (AU.cam == 3 ? 0.55f : 0.25f) : 0) * Clampf(1.f - rpm / 2600.f, 0, 1);
+     A *= 1.f + Nz() * (0.06f + 0.18f * cold) + lope * (Nz() > 0 ? 0.8f : -0.5f);
+     when += (long long)(Nz() * (8 + 30 * lope));
      EvPush(when, bk, 1, A);
      if (AU.knock > 0.05f && Rnd01() < AU.knock * 0.6f) SY.ping = fminf(1, SY.ping + 0.7f);
      if (!AU.two) SY.tick += AU.valvetrain <= 1 ? 0.06f : 0.025f;
@@ -228,10 +240,10 @@ static void AudioCB(void *buf, unsigned int frames) {
    Ev *v = &SY.ev[e];
    if (!v->kind || v->when > SY.n) continue;
    int bk = v->bank;
-   if (v->kind == 1) { SY.eS[bk] += v->amp; SY.eB[bk] += v->amp; SY.eN[bk] += v->amp * 0.7f; if (AU.diesel) SY.clat[bk] += v->amp * 0.9f; }
+   if (v->kind == 1) { SY.sub += v->amp * 0.9f; SY.eS[bk] += v->amp; SY.eB[bk] += v->amp; SY.eN[bk] += v->amp * 0.7f; if (AU.diesel) SY.clat[bk] += v->amp * 0.9f; }
    else if (v->kind == 2) { SY.eB[bk] += v->amp; SY.eN[bk] += v->amp * 0.3f; }
    else if (v->kind == 3) { SY.eS[bk] += v->amp * 1.4f; SY.eN[bk] += v->amp * 1.6f; }
-   else if (v->kind == 4) { SY.eI += v->amp; }
+   else if (v->kind == 4) { SY.eI += v->amp; SY.eIimp += v->amp; }
    v->kind = 0;
   }
   float o[2];
@@ -246,7 +258,7 @@ static void AudioCB(void *buf, unsigned int frames) {
    SY.comb[bk][SY.ci] = BqRun(&SY.lp2[bk], y);
    float s = BqRun(&SY.body[bk], y) * 2.2f + BqRun(&SY.ring[bk], y) * (ex == 3 ? 1.4f : 0.5f) + y * 0.35f;
    s = BqRun(&SY.lp[bk], s);
-   if (AU.diesel) { s += BqRun(&SY.clatHP, SY.clat[bk] * Nz()) * 0.6f; SY.clat[bk] *= 0.992f; }
+   if (AU.diesel) { s += BqRun(&SY.clatHP, SY.clat[bk] * Nz()) * 0.35f; SY.clat[bk] *= 0.985f; }
    o[bk] = tanhf(s * drive) / fmaxf(tanhf(drive), 0.3f);
   }
   SY.ci = (SY.ci + 1) % COMB;
@@ -254,7 +266,18 @@ static void AudioCB(void *buf, unsigned int frames) {
   float common = 0;
   float inn = BqRun(&SY.intake, Nz() * SY.eI);
   common += BqRun(&SY.intakeLP, inn) * 0.9f * intakeLoud;
+  common += BqRun(&SY.inRes, SY.eIimp) * 0.35f * intakeLoud * (0.3f + 0.7f * AU.thr);
+  SY.eIimp = 0;
   SY.eI *= dI;
+  float subv = BqRun(&SY.subLP, SY.sub) * 0.55f * Clampf(sqrtf(vc / 0.5f), 0.3f, 1.6f);
+  SY.sub *= 0.93f;
+  common += subv;
+  if (SY.flutEnv > 0.001f) {
+   SY.flutPh += 2 * PI * (11.f + 9.f * SY.flutEnv) / SR;
+   float g = 0.5f + 0.5f * sinf(SY.flutPh); g *= g * g;
+   common += BqRun(&SY.flutBP, Nz()) * g * SY.flutEnv * 0.55f;
+   SY.flutEnv *= 0.99988f;
+  }
   if (SY.tick > 0.001f) { common += BqRun(&SY.mechBP, Nz()) * SY.tick * 0.5f; SY.tick *= 0.97f; }
   if (SY.ping > 0.001f) { SY.pingPh += 2 * PI * 6300.f / SR; common += sinf(SY.pingPh) * SY.ping * 0.22f; SY.ping *= 0.9993f; }
   if (turbo) {
@@ -273,6 +296,7 @@ static void AudioCB(void *buf, unsigned int frames) {
    SY.stPh += 2 * PI * (110.f + rpm * 1.3f) / SR;
    float s = sinf(SY.stPh); s += 0.35f * (s > 0 ? 1 : -1);
    common += (s * 0.10f + Nz() * 0.03f) * Clampf((AU.volts - 8.f) / 4.f, 0.1f, 1);
+   common += BqRun(&SY.starterBP, sinf(SY.stPh * 9.f) + Nz() * 0.3f) * 0.05f;
   }
   if (AU.recoil) SY.ropeEnv = fminf(1, SY.ropeEnv + 0.002f); else SY.ropeEnv *= 0.999f;
   if (SY.ropeEnv > 0.001f) common += BqRun(&SY.rope, Nz()) * SY.ropeEnv * 0.3f;
@@ -284,6 +308,23 @@ static void AudioCB(void *buf, unsigned int frames) {
   float mus = MusicRun() * mvol, fx = SfxRun() * AU.volume * AU.sfxVol * 2.2f;
   float ev = AU.volume * AU.engVol;
   L = tanhf(L * 1.75f) * E[6] * ev * 1.6f + common * 1.8f * ev; R = tanhf(R * 1.75f) * E[6] * ev * 1.6f + common * 1.8f * ev;
+  {
+   // small garage room: parallel damped combs into allpasses, mixed in low
+   static const int CL[8] = {1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617}, AL[4] = {556, 441, 341, 225};
+   float in = (L + R) * 0.5f, wl = 0, wr = 0;
+   for (int k = 0; k < 8; k++) {
+    float y = SY.rvC[k][SY.rvI[k]];
+    SY.rvC[k][SY.rvI[k]] = in + BqRun(&SY.rvLP[k], y) * 0.72f;
+    SY.rvI[k] = (SY.rvI[k] + 1) % CL[k];
+    if (k & 1) wr += y; else wl += y;
+   }
+   for (int k = 0; k < 4; k++) {
+    float *w = (k & 1) ? &wr : &wl, b = SY.rvA[k][SY.rvAi[k]];
+    SY.rvA[k][SY.rvAi[k]] = *w + b * 0.5f; *w = b - *w * 0.5f;
+    SY.rvAi[k] = (SY.rvAi[k] + 1) % AL[k];
+   }
+   L += wl * 0.045f; R += wr * 0.045f;
+  }
   SY.dcL = SY.dcL * 0.9995f + L * 0.0005f; L -= SY.dcL;
   SY.dcR = SY.dcR * 0.9995f + R * 0.0005f; R -= SY.dcR;
   out[i * 2] = tanhf(L + mus + fx) * 0.97f;
@@ -306,7 +347,7 @@ static void AudioSetupEngine(const Build *b, const Spec *s) {
  }
  unsigned r = 777;
  for (int i = 0; i < n; i++) { r = r * 1103515245u + 12345u; AU.gain[i] = 0.82f + 0.36f * ((r >> 16) & 1023) / 1023.f; }
- AU.two = b->cycle; AU.exhaust = b->exhaust; AU.diesel = FUELS[b->fuel].diesel; AU.forced = b->forced; AU.intercooler = b->intercooler;
+ AU.cam = b->cam; AU.two = b->cycle; AU.exhaust = b->exhaust; AU.diesel = FUELS[b->fuel].diesel; AU.forced = b->forced; AU.intercooler = b->intercooler;
  AU.filter = b->filter; AU.valvetrain = b->cycle ? 9 : b->valvetrain; AU.nb = nb; AU.vcylL = s->vcylL;
  AU.ncyl = n;
 }

@@ -69,9 +69,9 @@ static const AltDef ALTS[] = {
 typedef struct { const char *name; float cfm, cost; } CarbDef;
 static const CarbDef CARBS[] = {
  {"16 mm small-engine", 10, 25}, {"Mikuni VM22", 20, 60}, {"Mikuni VM34", 85, 120}, {"Solex 34 PICT", 140, 150}, {"Dual Weber 40 DCOE", 250, 700},
- {"Holley 390 cfm", 390, 350}, {"Holley 600 cfm", 600, 450}, {"Holley 850 cfm", 850, 600}, {"Dual-quad 2x850", 1700, 1400},
+ {"Holley 390 cfm", 390, 350}, {"Holley 600 cfm", 600, 450}, {"Holley 850 cfm", 850, 600}, {"Dual-quad 2x850", 1700, 1400}, {"Keihin PWK 38 (2T)", 165, 180},
 };
-#define NCARB 9
+#define NCARB 10
 typedef struct { const char *name; float lbhr, cost; } InjDef;
 static const InjDef INJ[] = {
  {"19 lb/hr", 19, 30}, {"24 lb/hr", 24, 35}, {"30 lb/hr", 30, 45}, {"42 lb/hr", 42, 60}, {"60 lb/hr", 60, 80},
@@ -195,7 +195,7 @@ static const float CAMDRV_FRIC[] = {1.0f, 1.01f, 0.99f}, CAMDRV_COST[] = {0, 220
 
 static const Build PRESETS[] = {
  {0,0,0,1, 64,50,8.5f, 1,0,0, 1,0,0, 0,2,0,0,0, 0,0,0,0,2,50, "Push Mower 160cc", 0, 0,0,1, 0,0.6f,0},
- {1,1,0,1, 66.4f,72,9.0f, 1,2,1, 1,0,3, 0,2,0,0,0, 1,3,1,0,1,40, "Dirt Bike 250 2T", 0, 2,0,3, 0,0,0},
+ {1,1,0,1, 66.4f,72,9.0f, 1,2,1, 1,0,3, 0,2,0,0,0, 2,3,1,0,1,40, "Dirt Bike 250 2T", 0, 9,0,3, 0,0,0},
  {0,1,1,4, 86,86,9.5f, 1,2,3, 3,2,2, 3,3,1,15,1, 2,1,4,3,1,50, "Hot Hatch 2.0T", 0, 6,4,3, 1,5.0f,1},
  {0,1,3,8, 103.25f,92,10.5f, 0,1,2, 1,0,2, 2,1,0,0,0, 2,1,5,3,2,50, "Muscle V8 6.2", 0, 6,3,3, 1,5.7f,0},
  {0,5,1,6, 107,124,17.3f, 2,2,5, 1,2,0, 3,1,2,26,1, 2,0,6,4,3,50, "Diesel Truck 6.7", 0, 6,4,3, 1,11.5f,1},
@@ -402,6 +402,7 @@ static TqOut EvalTorque(const Build *b, const Spec *s, float rpm, float thr, flo
  float af = f->diesel ? 1.0f : a / (a + (1 - a) * rpm / ref + 1e-4f);
  float PR = 1 + boost / 14.7f;
  float dens = powf(PR, b->intercooler ? 0.84f : 0.68f);
+ if (b->cycle && b->forced >= 1 && b->forced <= 3) dens = 1 + (dens - 1) * 0.45f; // turbo 2T blows charge out the exhaust port
  float ve = VE(b, s, rpm);
  if (b->delivery == 0 && !f->diesel) {
   float need = CfmNeed(b, s, rpm, ve * af, dens), cfm = CARBS[b->carb].cfm;
@@ -523,6 +524,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
  }
  if (f->diesel) s->rpk *= 0.6f;
  s->veMax *= Clampf(powf(s->vcylL / (two ? 0.3f : 0.6f), 0.17f), 0.5f, 1.04f);
+ if (two) s->veMax *= Clampf(powf(0.25f / s->vcylL, 0.3f), 0.6f, 1.2f); // big 2T cylinders scavenge poorly
  s->veMax *= CAMS[b->cam].ve * FILTERS[b->filter].flow * DELIV[b->delivery].flow * (two ? EXH[b->exhaust].flow2 : EXH[b->exhaust].flow4);
  s->wLo = s->rpk * 0.9f * CAMS[b->cam].width; s->wHi = s->rpk * 1.35f * CAMS[b->cam].width;
  if (two) { s->wLo *= 0.8f; s->wHi *= 0.6f; }
@@ -531,6 +533,12 @@ static void ComputeSpec(const Build *b, Spec *s) {
   s->pistonRpm = 9400.f * sqrtf(INTERN[b->internals].str / (mp * (b->stroke / 86.f))) * SKIRT_RPM[b->skirt] * (b->caps ? 1.02f : 1.f);
  }
  s->dieselRpm = f->diesel ? 4600 * powf(90.f / b->bore, 0.35f) : 1e9f;
+ {
+  // mean piston speed ceiling: long strokes can't rev no matter how strong the parts are
+  static const float VPMAX[] = {22.f, 26.f, 27.5f, 29.f};
+  float vpRpm = VPMAX[b->internals] * (two ? 0.85f : 1.f) * 30000.f / b->stroke;
+  if (vpRpm < s->pistonRpm) s->pistonRpm = vpRpm;
+ }
  float lim = s->pistonRpm; s->limitBy = 0;
  if (s->floatRpm < lim) { lim = s->floatRpm; s->limitBy = 1; }
  if (s->dieselRpm * 1.05f < lim) { lim = s->dieselRpm * 1.05f; s->limitBy = 2; }
@@ -579,6 +587,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
   float topNeed = s->redline;
   float spT = SpoolTarget(b, s, topNeed, 1);
   float dens = powf(1 + b->boost * spT / 14.7f, b->intercooler ? 0.84f : 0.68f);
+  if (b->cycle && b->forced >= 1 && b->forced <= 3) dens = 1 + (dens - 1) * 0.45f;
   s->needCfm = CfmNeed(b, s, topNeed, VE(b, s, topNeed), dens);
  }
  int nb = (b->layout >= 2 && b->layout != 5) ? 2 : 1;

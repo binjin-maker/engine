@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <ctype.h>
 #include "font_reg.h"
 #include "font_bold.h"
 #include "sim.c"
@@ -1217,7 +1218,48 @@ static void AutoAudioTest(void) {
  printf("AUDIO rms=%.4f peak=%.3f nan=%d\n", sqrt(sum / (60 * 8192)), peak, nan);
 }
 
+static void WavOut(const char *path, const short *d, int frames) {
+ FILE *f = fopen(path, "wb"); if (!f) return;
+ int bytes = frames * 4, v;
+ fwrite("RIFF", 1, 4, f); v = 36 + bytes; fwrite(&v, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+ v = 16; fwrite(&v, 4, 1, f); short s2 = 1; fwrite(&s2, 2, 1, f); s2 = 2; fwrite(&s2, 2, 1, f);
+ v = 44100; fwrite(&v, 4, 1, f); v = 44100 * 4; fwrite(&v, 4, 1, f); s2 = 4; fwrite(&s2, 2, 1, f); s2 = 16; fwrite(&s2, 2, 1, f);
+ fwrite("data", 1, 4, f); fwrite(&bytes, 4, 1, f); fwrite(d, 2, frames * 2, f); fclose(f);
+}
+// offline: start each preset cold, idle, blip, full pull to redline, lift off; write a wav
+static void RenderSounds(const char *dir, int only) {
+ static short pcm[44100 * 2 * 16];
+ for (int p = 0; p < NPRESET; p++) {
+  if (only >= 0 && p != only) continue;
+  Build b = PRESETS[p]; Spec s; ComputeSpec(&b, &s);
+  Sim m; memset(&m, 0, sizeof m); SimReset(&m, &s, 0); m.ign = 1; m.choke = b.delivery == 0; m.temp = 35; m.oilT = 35;
+  memset(&SY, 0, sizeof SY); SY.rng = 1234;
+  AudioSetupEngine(&b, &s);
+  AU.volume = 0.8f; AU.engVol = 1; AU.sfxVol = 0; AU.musicVol = 0;
+  int fr = 0, tot = 44100 * 14; float buf[441 * 2]; double sum = 0; float peak = 0; int nan = 0, bov = 0;
+  for (int c = 0; c * 441 < tot; c++) {
+   float t = c * 0.01f;
+   int crank = !m.running && t < 3.f && STARTERS[b.starter].elec;
+   if (!STARTERS[b.starter].elec && !m.running && fmodf(t, 0.8f) < 0.01f && t < 3) m.recoilT = 0.35f;
+   m.thrCmd = t < 4 ? 0 : (t < 4.4f ? 0.6f : (t < 6 ? 0 : (t < 11 ? 1 : 0)));
+   if (m.temp > 45) m.choke = 0;
+   if (t > 5) m.temp = fmaxf(m.temp, 80);
+   for (int k = 0; k < 10; k++) SimStep(&m, &b, &s, 0.001f, crank);
+   AU.rpm = m.rpm; AU.temp = m.temp; AU.load = m.load; AU.q = m.q; AU.knock = m.knock; AU.spool = m.spool; AU.boost = m.boost;
+   AU.thr = fmaxf(m.thrAct, m.idleOpen); AU.volts = m.volts; AU.running = m.running; AU.cut = m.cut;
+   AU.starter = m.starterOn && m.volts > 9.5f; AU.recoil = m.recoilT > 0; if (m.bovCount != bov) { bov = m.bovCount; AU.bov = bov; }
+   AudioCB(buf, 441);
+   for (int i = 0; i < 882 && fr * 2 + i < 44100 * 2 * 16; i++) { float v = buf[i]; if (isnan(v)) { nan++; v = 0; } sum += v * v; peak = fmaxf(peak, fabsf(v)); pcm[fr * 2 + i] = (short)(Clampf(v, -1, 1) * 32000); }
+   fr += 441;
+  }
+  printf("SOUND %-22s rms %.3f peak %.3f nan %d maxrpm %.0f\n", PRESETS[p].name, sqrt(sum / (fr * 2.0)), peak, nan, m.maxRpm);
+  char nm[64]; snprintf(nm, 64, "%s", PRESETS[p].name); for (char *q = nm; *q; q++) if (!isalnum((unsigned char)*q)) *q = '_';
+  WavOut(TextFormat("%s/%s.wav", dir, nm), pcm, fr);
+ }
+}
+
 int main(int argc, char **argv) {
+ if (getenv("SOUNDS")) { RenderSounds(getenv("SOUNDS"), getenv("ONLY") ? atoi(getenv("ONLY")) : -1); return 0; }
  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--autotest") && i + 1 < argc) { gAutotest = 1; snprintf(gShotDir, 256, "%s", argv[i + 1]); }
  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
  InitWindow(1600, 900, "Engine Garage - DOOG");
@@ -1438,7 +1480,7 @@ int main(int argc, char **argv) {
    gDS.fanAng += fminf(gM.rpm * 0.9f / 60.f * 2 * PI * dt, 0.42f);
   }
   // audio params
-  AU.rpm = gMode ? gM.rpm : 0; AU.load = gM.load; AU.q = gM.q; AU.knock = gM.knock; AU.spool = gM.spool; AU.boost = gM.boost;
+  AU.rpm = gMode ? gM.rpm : 0; AU.temp = gM.temp; AU.load = gM.load; AU.q = gM.q; AU.knock = gM.knock; AU.spool = gM.spool; AU.boost = gM.boost;
   AU.engVol = gSet.eng; AU.sfxVol = gSet.sfx; gVolume = gSet.master;
   AU.thr = fmaxf(gM.thrAct, gM.idleOpen); AU.volts = gM.volts; AU.running = gMode && gM.running; AU.cut = gM.cut;
   AU.starter = gMode && gM.starterOn && gM.volts > 9.5f; AU.recoil = gMode && gM.recoilT > 0; AU.volume = gMuted ? 0 : gVolume;
