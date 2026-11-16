@@ -83,7 +83,8 @@ static const char *LUBE_TIP[] = {
  "A dipper on the rod splashes oil around. Dirt cheap; only feeds small engines, and only while the oil stays under the crank (tilt kills it).",
  "Pump pulls oil from the pan through galleries to bearings and heads, then it drains back by gravity. Laid-over cylinders drain badly.",
  "Scavenge pumps empty the pan into a remote tank; a pressure pump feeds the engine. Works at any angle and under hard g-loads. Pricey."};
-static const char *GOVS[] = {"None", "Governor 3600 rpm", "Governor 4500 rpm", "Rev limiter"};
+static const char *GOVS[] = {"None", "Governor 3600 rpm", "Governor 4500 rpm", "Rev limiter", "Adjustable governor"};
+#define NGOV 5
 static const float BSFC[] = {0.5f, 0.5f, 0.5f, 0.68f, 1.0f, 0.4f, 2.6f};
 typedef struct { const char *name; float flt, rpk, ve, hgt, cost; const char *tip; } VT4Def;
 static const VT4Def VT4[] = {
@@ -174,7 +175,10 @@ typedef struct {
  int ncust; float cAng[16]; int cSlot[16], cFlip[16];
  // part placement
  int placeMan; float altAng, stAng; int filtPos, turboSide;
+ float govSet;
 } Build;
+static float GovSet(const Build *b) { return b->govSet >= 1000 ? fminf(b->govSet, 6000) : 3000; }
+static float GovCost(const Build *b) { return b->gov == 4 ? 25 + (GovSet(b) - 1000) / 5000.f * 95 : (b->gov == 3 ? 60 : (b->gov ? 12 : 0)); }
 static float WallMM(const Build *b) { return b->wall > 0.5f ? b->wall : 8.f; }
 static float SpacingMM(const Build *b) { return b->spacing > 0.5f ? b->spacing : 10.f; }
 static const char *DECKS[] = {"Semi-closed", "Open deck", "Closed deck"};
@@ -543,7 +547,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
  if (s->floatRpm < lim) { lim = s->floatRpm; s->limitBy = 1; }
  if (s->dieselRpm * 1.05f < lim) { lim = s->dieselRpm * 1.05f; s->limitBy = 2; }
  s->redline = floorf(lim * 0.95f / 100.f) * 100.f;
- s->govRpm = b->gov == 1 ? 3600 : (b->gov == 2 ? 4500 : 0);
+ s->govRpm = b->gov == 1 ? 3600 : (b->gov == 2 ? 4500 : (b->gov == 4 ? GovSet(b) : 0));
  s->topRpm = s->govRpm > 0 ? s->govRpm * 1.06f : (b->gov == 3 ? s->redline * 1.01f : s->redline * 1.12f);
  s->inertia = (0.012f + 0.075f * s->dispL * INTERN[b->internals].mass) * FLY[b->flywheel].mul + 0.004f * b->cyl;
  float th = (1 - powf(b->cr, -0.28f)) / (1 - powf(10, -0.28f));
@@ -621,7 +625,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
   + (b->delivery == 0 ? CARBS[b->carb].cost : INJ[b->inj].cost * s->ninj + ECU[b->delivery] * (0.5f + 0.1f * b->cyl))
   + FILTERS[b->filter].cost * (0.3f + 0.35f * sqrtf(L)) + FORCED[b->forced].cost * Clampf(sqrtf(L / 2.f), 0.4f, 1.6f) + (b->forced && b->intercooler ? 450 * sz : 0)
   + COOL[b->cooling].cost * (0.3f + 0.35f * L) + EXH[b->exhaust].cost * (0.05f + 0.6f * sz)
-  + st->cost + ALTS[b->alternator].cost + FLY[b->flywheel].cost + (b->gov == 3 ? 60 : (b->gov ? 12 : 0)) + (b->fuel == 6 ? 300 : 0)
+  + st->cost + ALTS[b->alternator].cost + FLY[b->flywheel].cost + GovCost(b) + (b->fuel == 6 ? 300 : 0)
   + (two ? 0 : (b->lube == 0 ? 1 : (b->lube == 1 ? 25 + 15 * L : 900 + 200 * L))) + (b->oilCooler ? 80 + 40 * L : 0)
   + (DECK_COST[b->deck] + SKIRT_COST[b->skirt]) * (0.4f + 0.3f * L) + CAPS_COST[b->caps] * (0.3f + 0.1f * b->cyl) + (b->balShaft ? 120 + 60 * L : 0)
   + IGN_COST[b->ignition] * (b->ignition == 4 ? b->cyl * 0.5f : 1) + (two ? 0 : CAMDRV_COST[b->camDrive] * (0.5f + 0.25f * L));
@@ -716,6 +720,8 @@ static int BuildWarnings(const Build *b, const Spec *s, char out[][96], int *sev
  if (b->cycle == 0 && fabsf(b->tilt) > 50) W(1, "Cylinders laid over %.0f deg: wet sump drains badly.", fabsf(b->tilt));
  if (b->layout >= 2 && fabsf(b->tilt) > 30) W(1, "Tilting a V/boxer that far puts a bank near the floor.");
  if (b->gov == 0) W(1, "No governor or limiter: nothing stops it over-revving.");
+ if (s->govRpm > s->redline) W(2, "Governor set to %.0f rpm, above the %.0f rpm redline: it won't protect the engine.", s->govRpm, s->redline);
+ if (b->gov == 4 && s->govRpm < s->idle + 250) W(1, "Governor set to %.0f rpm barely clears idle (%.0f): almost no throttle range.", s->govRpm, s->idle);
  if (!b->cycle && b->camDrive == 2 && s->topRpm > 9000) W(2, "Timing belt above ~9000 rpm: it will jump teeth or snap.");
  if (b->ignition == 4 && !s->hasBatt) W(3, "Coil-on-plug needs a battery. Add electric start or a charging system.");
  if (b->ignition == 2 && !s->hasBatt) W(3, "A distributor coil needs a battery. Use points/CDI on a magneto.");
@@ -846,7 +852,7 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  m->idleOpen += (m->idleCmd - m->idleOpen) * Clampf(dt / itau, 0, 1);
  float thr = fmaxf(m->thrAct, m->idleOpen);
  if (s->govRpm > 0 && m->limiter) {
-  float tgt = Clampf(0.55f + (s->govRpm - rpm) * 0.0016f * (1 + 1.5f * (1 - warm2)), 0, 1);
+  float tgt = Clampf(0.55f * powf(Clampf(s->govRpm / 3600.f, 0.2f, 1.4f), 1.6f) + (s->govRpm - rpm) * 0.0016f * (1 + 1.5f * (1 - warm2)), 0, 1);
   float gtau = 0.15f + 0.35f * (1 - warm2);
   m->govOpen += (tgt - m->govOpen) * Clampf(dt / gtau, 0, 1);
   thr = fminf(thr, fmaxf(m->govOpen, m->idleOpen * 0.8f));

@@ -10,6 +10,7 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
   - *Shape:* wall thickness, bore spacing (siamesed bores run hot), open/semi/closed deck, skirt depth or bedplate, 2-bolt / 4-bolt / billet main caps, balance shafts, flat- or cross-plane V8 crank. Live primary / secondary / rocking balance readout.
   - *Cylinders:* place every cylinder yourself on a front-view dial: pick its angle, which crank throw it rides on, and which way its ports face. Build radials, W12s, X engines, inverted inlines and anything else. The crank throw angles are auto-optimized for smoothness and even firing. Cylinders sharing a throw must be spread apart, and downward-pointing cylinders need a dry sump.
   - *Placement:* hand-place the alternator and starter (angle around the crank / flywheel), the oil filter (front or either side) and the turbo (left, right or rear). Every part must bolt to what it works with, and nothing may collide, or the engine can't be built.
+- **Speed control:** none, fixed 3600 / 4500 rpm governors, a rev limiter, or an adjustable governor (1000-6000 rpm; higher settings cost more).
 - **Ignition:** points, distributor, CDI or coil-on-plug, each with its own rpm and boost limits. Coil ignitions need a battery.
 - **Cam drive:** chain, gear or belt. Belts jump teeth above ~9000 rpm.
 - **Shake:** an imbalanced layout shakes the engine on the dyno and can crack the crank at high rpm.

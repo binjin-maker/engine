@@ -640,7 +640,11 @@ static void BuildPanel(int sw, int sh) {
   if ((d = UiSelect(ROW(), "Charging", ALTS[b->alternator].name, PartTip(P_ALT, ALTS[b->alternator].tip), 1))) { b->alternator = Cyc(b->alternator, d, NALT); ch = 1; } NEXT();
   { int ig = b->ignition; if ((d = UiSelect(ROW(), "Ignition", IGNS[ig], IGN_TIP[ig], !FUELS[b->fuel].diesel))) { b->ignition = Cyc(b->ignition, d, 5); ch = 1; } NEXT(); }
   if ((d = UiSelect(ROW(), "Cam drive", CAMDRV[b->camDrive], CAMDRV_TIP[b->camDrive], !b->cycle && b->valvetrain > 0))) { b->camDrive = Cyc(b->camDrive, d, 3); ch = 1; } NEXT();
-  if ((d = UiSelect(ROW(), "Speed control", GOVS[b->gov], "Cheap engines use a mechanical governor (holds a set rpm, hunts when cold). Performance engines use a rev limiter. None = nothing stops over-revving.", 1))) { b->gov = Cyc(b->gov, d, 4); ch = 1; } NEXT();
+  if ((d = UiSelect(ROW(), "Speed control", GOVS[b->gov], "Cheap engines use a mechanical governor (holds a set rpm, hunts when cold). Performance engines use a rev limiter. None = nothing stops over-revving.", 1))) { b->gov = Cyc(b->gov, d, NGOV); if (b->gov == 4 && b->govSet < 1000) b->govSet = 3000; ch = 1; } NEXT();
+  if (b->gov == 4) {
+   float gs = GovSet(b); char gv[32]; snprintf(gv, 32, "%.0f rpm  $%.0f", gs, GovCost(b));
+   if (UiSlider(35, ROW(), "Governor set", &gs, 1000, 6000, 100, gv, "Where the governor holds the engine. Higher settings need stiffer springs and heavier flyweights, so they cost more.", 1)) { b->govSet = gs; ch = 1; } NEXT();
+  }
   y += 6;
   Tx(TextFormat("Battery: %s   Spark: %s", gS.hasBatt ? "yes" : "none", gS.magneto ? "magneto" : (gS.hasBatt ? "battery coil" : "NONE")), x + 4, y, 16, COL_TXT); y += 24;
   Tx(TextFormat("Electrical load %.0f A   charging %.0f A", gS.demandA, ALTS[b->alternator].amps), x + 4, y, 15, COL_DIM); y += 22;
@@ -1066,7 +1070,7 @@ static void Overview(int sw, int sh) {
  float cruiseLh = cruiseKw / eff * 3.6f / LHV[b->fuel], fullLh = fullKw / eff * 3.6f / LHV[b->fuel];
  yy += 12; Tb("ECONOMY", c1, yy, 15, COL_DIM); yy += 24; n = 0;
  ROWV("Peak thermal efficiency", "%.0f%%", eff * 100);
- ROWV("Cruise (25%% power)", "%.1f L/h  (%.2f gal/h)", cruiseLh, cruiseLh * 0.264f);
+ ROWV("Cruise (25% power)", "%.1f L/h  (%.2f gal/h)", cruiseLh, cruiseLh * 0.264f);
  ROWV("Wide open", "%.1f L/h  (%.1f gal/h)", fullLh, fullLh * 0.264f);
  ROWV("Range on a 50 L tank", "~%.1f h cruising", 50.f / fmaxf(cruiseLh, 0.01f));
  for (int i = 0; i < n; i++) { Tx(r[i].k, c1, yy, 15, COL_DIM); TxR(r[i].v, c1 + cw, yy, 15, COL_TXT, 1); yy += 21; }
@@ -1120,7 +1124,7 @@ static void Overview(int sw, int sh) {
  ROWV("Exhaust", "%s", EXH[b->exhaust].name);
  ROWV("Starter", "%s", STARTERS[b->starter].name);
  ROWV("Charging", "%s", ALTS[b->alternator].name);
- ROWV("Speed control", "%s", GOVS[b->gov]);
+ ROWV("Speed control", "%s", b->gov == 4 ? TextFormat("Adjustable governor @ %.0f rpm", GovSet(b)) : GOVS[b->gov]);
  if (!b->cycle) ROWV("Lubrication", "%s, %.1f L%s", LUBES[b->lube], b->oilL, b->oilCooler ? ", cooler" : "");
  ROWV(b->cycle ? "Oil mix" : "Oil", "%s", b->cycle ? (b->mix < 1 ? "NONE" : TextFormat("%.0f : 1", b->mix)) : OILS[b->oil].name);
  for (int i = 0; i < n && yy < y + h - 24; i++) {
@@ -1315,7 +1319,7 @@ int main(int argc, char **argv) {
    b.bore = 45 + RN(80); b.stroke = 40 + RN(90); b.cr = 7 + RN(12); b.tilt = RN(3) ? 0 : (float)(RN(121) - 60);
    b.valvetrain = b.cycle ? RN(3) : RN(4); b.valves = RN(4); b.cam = RN(4); b.delivery = RN(NDEL); b.filter = RN(NFIL);
    b.forced = RN(NFORCED); b.boost = 5 + RN(20); b.intercooler = RN(2); b.cooling = RN(3); b.exhaust = RN(b.cycle ? 4 : 3);
-   b.starter = RN(NSTART); b.alternator = RN(NALT); b.flywheel = RN(NFLY); b.carb = RN(NCARB); b.inj = RN(NINJ); b.gov = RN(4); b.name[0] = 0;
+   b.starter = RN(NSTART); b.alternator = RN(NALT); b.flywheel = RN(NFLY); b.carb = RN(NCARB); b.inj = RN(NINJ); b.gov = RN(NGOV); b.govSet = 1000 + RN(51) * 100.f; b.name[0] = 0;
    if (RN(4) == 0) { b.layout = 5; b.lube = 2; b.ncust = 1 + RN(10); for (int i = 0; i < b.ncust; i++) { b.cAng[i] = (float)(RN(73) * 5 - 180); b.cSlot[i] = RN(5); b.cFlip[i] = RN(4) == 0; } b.cyl = b.ncust; }
    b.placeMan = RN(5) == 0; b.altAng = (float)(RN(73) * 5 - 180); b.stAng = (float)(RN(73) * 5 - 180); b.filtPos = RN(3); b.turboSide = RN(4);
    b.skirt = RN(4); b.deck = RN(3); b.caps = RN(3); b.wall = 4 + RN(13); b.ignition = RN(5); b.camDrive = RN(3);
@@ -1335,6 +1339,8 @@ int main(int argc, char **argv) {
   CloseWindow(); return 0;
  }
  Camera3D cam = {0}; cam.up = (Vector3){0, 1, 0}; cam.fovy = 38; cam.projection = CAMERA_PERSPECTIVE;
+ int uiShot = getenv("UISHOT") ? 1 : 0, uiF = 0;
+ if (uiShot) { gB = PRESETS[8]; gB.gov = 4; gB.govSet = 4200; OnBuildChanged(); gTab = 4; }
  while (!WindowShouldClose()) {
   float dt = gAutotest ? 1.f / 60.f : fminf(GetFrameTime(), 0.05f);
   gTime += dt;
@@ -1498,6 +1504,7 @@ int main(int argc, char **argv) {
   if (gShowSettings) SettingsPanel(sw, sh);
   Toasts(sw, dt);
   EndDrawing();
+  if (uiShot && ++uiF == 8) { snprintf(gShotDir, 256, "%s", getenv("UISHOT")); Shot(TextFormat("ui%d", uiShot)); if (++uiShot > 2) break; uiF = 0; gTab = 4; gShowOverview = uiShot == 2; }
  }
  if (audioOk) { UnloadAudioStream(stream); CloseAudioDevice(); }
  CloseWindow();
