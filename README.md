@@ -31,6 +31,8 @@ Press **H** (or the green SHOP button) to open your shop office. You start with 
 - **Materials:** cast iron, aluminum, CGI, magnesium, billet, steel and titanium with daily prices, shortages, local buys and cheaper bulk orders. Run short mid-build and it rush-buys at +25%.
 - **Marketplaces:** LocalList (free, few buyers, lowballers and scammers), SwapBay (listing + final value fees), TorqueTrader (enthusiasts, subscription, needs reputation), your own website (setup + hosting), IndustrialSource (B2B), or dump it on a dealer for 55%.
 - **Buyers:** lawn & garden, karts, bikes, cars, racing, trucks, marine, industrial, aircraft and collectors each judge your engine differently and have budgets. They buy, make offers, or walk.
+- **Competitors:** 22 rival engines from 13 makers across every segment, each with a price and quality rating. Buyers take whoever gives the better deal for the quality. Sell into a rival's segment and they cut prices (and sometimes upgrade); stop and they drift back up. The MARKET tab shows their prices, sales and your share.
+- **Pricing:** type any asking price, nudge it 5%, or snap to the suggested price.
 - **Advertising:** flyers, social, search ads, racing magazines, trade journals and trade show booths, each pulling different buyers to different sites.
 - **Risk:** engines with red warnings fail after the sale. A warranty sells for more but you refund failures; as-is costs you reputation.
 - **Contracts, rent, utilities, a bank loan,** and a ledger. Go below -$15,000 and the bank takes the shop.

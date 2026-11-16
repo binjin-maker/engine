@@ -1285,7 +1285,7 @@ int main(int argc, char **argv) {
   for (int round = 0; round < 6; round++) {
    if (!StartBuild(&PRESETS[pick], 1)) { printf("cant build: money %.0f\n", C.money); break; }
    int d0 = C.day; while (C.job[0].used && C.day < d0 + 30) ShopDay();
-   for (int i = 0; i < NITEM; i++) if (C.inv[i].used && C.inv[i].site < 0) { C.inv[i].site = 0; C.inv[i].price = roundf(BestValue(&C.inv[i], 0, NULL) / 25) * 25; }
+   for (int i = 0; i < NITEM; i++) if (C.inv[i].used && C.inv[i].site < 0) { C.inv[i].site = 0; C.inv[i].price = roundf(BestValue(&C.inv[i], 0, NULL) * (getenv("PK") ? atof(getenv("PK")) : 1.f) / 25) * 25; }
    int s0 = C.sales; d0 = C.day;
    while (C.sales == s0 && C.day < d0 + 60) { ShopDay(); for (int o = 0; o < NOFFER; o++) if (C.off[o].used && !C.off[o].scam) { SellItem(C.off[o].item, C.off[o].amount, 0, "x"); C.off[o].used = 0; } }
    printf("round %d day %d money %.0f rep %.1f sales %d  %s\n", round, C.day, C.money, C.rep, C.sales, C.log[C.nlog-1].s);
@@ -1396,8 +1396,8 @@ int main(int argc, char **argv) {
   if (gEditName) goto skipKeys;
   if (IsKeyPressed(KEY_M)) gMuted ^= 1;
   if (IsKeyPressed(KEY_O) && gMode == 0 && !gShop) gShowOverview ^= 1;
-  if (IsKeyPressed(KEY_H) && !gEditName) { gShop ^= 1; if (gShop) gMode = 0; }
-  if (gShop && IsKeyPressed(KEY_ESCAPE)) gShop = 0;
+  if (IsKeyPressed(KEY_H) && !gEditName && !gPriceEdit) { gShop ^= 1; if (gShop) gMode = 0; }
+  if (gShop && IsKeyPressed(KEY_ESCAPE) && !gPriceEdit) gShop = 0;
   if (IsKeyPressed(KEY_V)) gDS.oilView ^= 1;
   if (IsKeyPressed(KEY_N)) gMusicOn ^= 1;
   if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) gSet.master = Clampf(gSet.master + 0.1f, 0, 1);
@@ -1546,7 +1546,7 @@ int main(int argc, char **argv) {
   if (gShowSettings) SettingsPanel(sw, sh);
   Toasts(sw, dt);
   EndDrawing();
-  if (shopShot && ++shF == 6) { snprintf(gShotDir, 256, "%s", getenv("SHOPSHOT")); Shot(TextFormat("shop%d", shT)); shF = 0; if (++shT >= 8) break; gShopTab = shT; }
+  if (shopShot && ++shF == 6) { snprintf(gShotDir, 256, "%s", getenv("SHOPSHOT")); Shot(TextFormat("shop%d", shT)); shF = 0; if (++shT >= 9) break; gShopTab = shT; }
   if (uiShot && ++uiF == 8) { snprintf(gShotDir, 256, "%s", getenv("UISHOT")); Shot(TextFormat("ui%d", uiShot)); if (++uiShot > 2) break; uiF = 0; gTab = 4; gShowOverview = uiShot == 2; }
  }
  if (audioOk) { UnloadAudioStream(stream); CloseAudioDevice(); }

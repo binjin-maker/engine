@@ -61,6 +61,22 @@ typedef struct { int used, seg, qty, done, needGov, needDiesel, deadline; float 
 typedef struct { int failDay; float refund; int warranty; char name[32]; } Sold;
 typedef struct { int day; float amt; char s[88]; } LogLine;
 
+typedef struct { const char *co, *name; int seg; float hp, q; int diesel; } CompDef;
+#define NCOMP 22
+static const CompDef COMPS[NCOMP] = {
+ {"Bramble Power", "B-140 mower engine", 0, 4, 0.95f, 0}, {"Yardking", "YK 6.5 OHV", 0, 6.5f, 1.02f, 0},
+ {"Bramble Power", "Kart Champ 212", 1, 7, 0.95f, 0}, {"Torx Small Engines", "Hustler 420", 1, 13, 1.0f, 0},
+ {"Rivet Moto", "R250 two-stroke", 2, 45, 1.0f, 0}, {"Kestrel", "K650 twin", 2, 70, 1.05f, 0}, {"Kestrel", "K1000 four", 2, 160, 1.1f, 0},
+ {"Apex Engines", "LX 2.0T", 3, 250, 1.05f, 0}, {"Ironside", "Ironside 350 crate", 3, 330, 1.0f, 0}, {"Apex Engines", "V8 6.2 crate", 3, 450, 1.08f, 0},
+ {"Apex Engines", "R-Spec 2.0", 4, 350, 1.12f, 0}, {"Velocity Race", "427 race V8", 4, 650, 1.1f, 0}, {"Velocity Race", "Sprint 1000", 4, 1000, 1.05f, 0},
+ {"Ironclad Diesel", "IC 5.9", 5, 300, 1.0f, 1}, {"Ironclad Diesel", "IC 6.7", 5, 380, 1.05f, 1},
+ {"Tidewater", "TW 5.7 marine", 6, 300, 1.05f, 0}, {"Tidewater", "TW 8.1 marine", 6, 420, 1.05f, 0},
+ {"GenCo", "G-20 genset", 7, 20, 1.0f, 0}, {"Ironclad Diesel", "IC 4.5 power unit", 7, 120, 1.05f, 1},
+ {"Aerolite", "AL-100", 8, 100, 1.1f, 0}, {"Aerolite", "AL-180", 8, 180, 1.1f, 0},
+ {"Odd Iron Works", "Replica radial", 9, 120, 0.95f, 0},
+};
+typedef struct { float price, base, q, press, sales30, lastLogged; } CompState;
+
 typedef struct {
  int magic, ver, started, over;
  float money, rep, loan; int day, lastShow;
@@ -72,6 +88,7 @@ typedef struct {
  float income30, spend30, cash[60];
  int sales, warrantyClaims; unsigned rng;
  float pendUtil, pendAds;
+ int compInit; CompState comp[NCOMP]; float mySeg30[NSEG], compSeg30[NSEG]; int lost[NITEM];
 } Career;
 static Career C;
 static int gShop = 0, gShopTab = 0, gInvSel = -1;
@@ -89,17 +106,20 @@ static void CLog(float amt, const char *fmt, ...) {
 static void Pay(float amt, const char *why) { C.money -= amt; C.spend30 += amt; if (amt >= 1 && why) CLog(-amt, "%s", why); }
 static void Earn(float amt, const char *why) { C.money += amt; C.income30 += amt; CLog(amt, "%s", why); }
 
+static int PriceField(Rectangle r, float *v);
+static void CompInit(void);
 static void CareerNew(void) {
  memset(&C, 0, sizeof C);
  C.magic = 0x53484F50; C.ver = 1; C.started = 1; C.money = 10000; C.rep = 5; C.day = 1; C.rng = (unsigned)time(NULL) | 1; C.lastShow = -99;
  for (int m = 0; m < NMAT; m++) C.price[m] = MAT_BASE[m];
  C.siteOn[0] = 1;
+ CompInit();
  for (int i = 0; i < 60; i++) C.cash[i] = 10000;
  CLog(10000, "Started the shop with $10,000 in savings");
 }
 static void CareerLoad(void) {
  int sz = 0; unsigned char *d = LoadFileData(CareerPath(), &sz);
- if (d && sz == (int)sizeof C && ((Career *)d)->magic == 0x53484F50) memcpy(&C, d, sizeof C); else CareerNew();
+ if (d && sz <= (int)sizeof C && sz > 64 && ((Career *)d)->magic == 0x53484F50) { memset(&C, 0, sizeof C); memcpy(&C, d, sz); if (!C.compInit) CompInit(); } else CareerNew();
  if (d) UnloadFileData(d);
 }
 
@@ -128,10 +148,14 @@ static void ItemFromBuild(Item *it, const Build *b) {
  f[9] = it->exotic ? 1 : 0.3f;
  for (int k = 0; k < NSEG; k++) if (f[k] > 0 && it->vib > 0.6f && (k == 2 || k == 3 || k == 8)) f[k] *= 0.85f;
 }
+static float ItemQuality(const Item *it) {
+ return (it->dyno ? 1.f : 0.88f) * (it->finish ? 1.08f : 1.f) * (it->warranty ? 1.1f : 1.f) * (0.85f + C.rep * 0.0035f)
+  * (it->vib > 0.6f ? 0.93f : 1.f) * (it->risk ? 0.88f : 1.f) * (it->b.internals >= 2 ? 1.05f : 1.f) * ((it->b.block == 2 || it->b.block == 4) ? 1.03f : 1.f);
+}
 static float ItemValue(const Item *it, int seg, int site) {
  if (it->fit[seg] <= 0) return 0;
  float v = (80 + 26 * it->hp) * SEG_MULT[seg] * it->fit[seg] * ((it->diesel && seg >= 5 && seg <= 7) ? 1.6f : 1.f);
- v *= (it->dyno ? 1.f : 0.88f) * (it->finish ? 1.08f : 1.f) * (it->warranty ? 1.1f : 1.f) * (0.85f + C.rep * 0.0035f);
+ v *= ItemQuality(it);
  if (site >= 0) v *= SITES[site].pay;
  return fminf(v, SEG_BUDGET[seg]);
 }
@@ -140,6 +164,24 @@ static float BestValue(const Item *it, int site, int *segOut) {
  for (int k = 0; k < NSEG; k++) { float v = ItemValue(it, k, site); if (v > best) { best = v; bs = k; } }
  if (segOut) *segOut = bs;
  return best;
+}
+static float CompValue(int j) {
+ const CompDef *d = &COMPS[j];
+ float v = (80 + 26 * d->hp) * SEG_MULT[d->seg] * C.comp[j].q * ((d->diesel && d->seg >= 5 && d->seg <= 7) ? 1.6f : 1.f);
+ return fminf(v, SEG_BUDGET[d->seg]);
+}
+static void CompInit(void) {
+ for (int j = 0; j < NCOMP; j++) { C.comp[j].q = COMPS[j].q; float v = CompValue(j); C.comp[j].base = C.comp[j].price = roundf(v * 0.93f / 5) * 5; C.comp[j].lastLogged = C.comp[j].price; }
+ C.compInit = 1;
+}
+static int CompFor(int seg, float hp) {
+ int best = -1; float bd = 0.5f;
+ for (int j = 0; j < NCOMP; j++) if (COMPS[j].seg == seg) { float d = fabsf(logf(fmaxf(hp, 0.5f) / COMPS[j].hp)); if (d < bd) { bd = d; best = j; } }
+ return best;
+}
+static void Stars(float x, float y, float q) {
+ int n = (int)roundf(Clampf((q - 0.7f) / 0.5f * 5, 1, 5));
+ for (int k = 0; k < 5; k++) DrawCircleV((Vector2){x + k * 13, y + 7}, 4.5f, k < n ? COL_YEL : COL_LINE);
 }
 static int InvCap(void) { return C.equip[6] ? NITEM : 4; }
 static int InvCount(void) { int n = 0; for (int i = 0; i < NITEM; i++) n += C.inv[i].used; return n; }
@@ -232,13 +274,15 @@ static int ItemMeets(const Item *it, const Contract *c) {
 static void FinishItem(const Build *b, float cost) {
  for (int i = 0; i < NITEM; i++) if (!C.inv[i].used) {
   if (InvCount() >= InvCap()) return;
-  ItemFromBuild(&C.inv[i], b); C.inv[i].costBasis = cost; C.inv[i].site = -1;
+  ItemFromBuild(&C.inv[i], b); C.inv[i].costBasis = cost; C.inv[i].site = -1; C.lost[i] = 0;
   C.inv[i].price = roundf(BestValue(&C.inv[i], 0, NULL) / 25) * 25;
   return;
  }
 }
 static void SellItem(int i, float price, int site, const char *buyer) {
  Item *it = &C.inv[i];
+ { int bs; BestValue(it, -1, &bs); C.mySeg30[bs] += 1;
+   for (int j = 0; j < NCOMP; j++) if (it->fit[COMPS[j].seg] > 0 && fabsf(logf(fmaxf(it->hp, 0.5f) / COMPS[j].hp)) < 0.5f) C.comp[j].press += 1; }
  float fee = site >= 0 ? price * SITES[site].fee : 0;
  Earn(price - fee, TextFormat("Sold %s%s for $%.0f%s", it->name, site >= 0 ? TextFormat(" on %s", SITES[site].name) : "", price, fee > 0 ? TextFormat(" (fee $%.0f)", fee) : ""));
  ToastAdd(TextFormat("SOLD: %s to %s, $%.0f", it->name, buyer, price - fee), COL_GRN); SfxPush(SFX_DONE);
@@ -328,6 +372,14 @@ static void ShopDay(void) {
    float r = CR01() * tot; int seg = 0; while (seg < NSEG - 1 && r > mix[seg]) { r -= mix[seg]; seg++; }
    float val = ItemValue(it, seg, si) * (0.82f + 0.36f * CR01());
    if (val <= 0) continue;
+   int cj = CompFor(seg, it->hp);
+   if (cj >= 0) {
+    float valC = CompValue(cj) * SITES[si].pay * (0.82f + 0.36f * CR01()), sC = valC - C.comp[cj].price, sY = val - it->price;
+    int toComp = 0;
+    if (sC >= 0 && sY < 0) toComp = CR01() < 0.85f;
+    else if (sC >= 0 && sY >= 0) toComp = CR01() > 1.f / (1.f + expf((sC - sY) / (0.06f * it->price)));
+    if (toComp) { C.comp[cj].sales30 += 1; C.compSeg30[seg] += 1; C.lost[i]++; continue; }
+   }
    if (val >= it->price) { SellItem(i, it->price, si, BuyerName()); break; }
    if (val >= it->price * (si == 0 ? 0.55f : 0.72f) && CR01() < 0.35f * sd->offerK) {
     for (int o = 0; o < NOFFER; o++) if (!C.off[o].used) {
@@ -349,6 +401,21 @@ static void ShopDay(void) {
   }
  }
  for (int o = 0; o < NOFFER; o++) if (C.off[o].used && (--C.off[o].days <= 0 || !C.inv[C.off[o].item].used)) C.off[o].used = 0;
+ // competitors: undercut when you take their buyers, drift back when you don't
+ for (int j = 0; j < NCOMP; j++) {
+  CompState *cs = &C.comp[j];
+  float floorP = cs->base * 0.8f;
+  if (cs->press > 0.4f) cs->price = fmaxf(floorP, cs->price * (1 - 0.006f * fminf(cs->press, 2)));
+  else cs->price += (cs->base - cs->price) * 0.03f;
+  if (cs->press > 1.5f && CR01() < 0.04f && cs->q < 1.25f) { cs->q += 0.03f; CLog(0, "%s upgraded its %s (better quality)", COMPS[j].co, COMPS[j].name); }
+  cs->press *= 0.93f;
+  float bg = CPois(0.4f * SEG_W[COMPS[j].seg] / 10.f);
+  cs->sales30 += bg; C.compSeg30[COMPS[j].seg] += bg;
+  if (cs->price < cs->lastLogged * 0.94f) { CLog(0, "%s cut the %s to $%.0f", COMPS[j].co, COMPS[j].name, cs->price); ToastAdd(TextFormat("%s cut prices on the %s", COMPS[j].co, COMPS[j].name), COL_YEL); cs->lastLogged = cs->price; }
+  else if (cs->price > cs->lastLogged * 1.06f) cs->lastLogged = cs->price;
+  cs->sales30 *= 0.967f;
+ }
+ for (int k = 0; k < NSEG; k++) { C.mySeg30[k] *= 0.967f; C.compSeg30[k] *= 0.967f; }
  // warranty failures
  for (int k = 0; k < 16; k++) if (C.sold[k].failDay && C.sold[k].failDay <= C.day) {
   if (C.sold[k].warranty) { Pay(C.sold[k].refund, TextFormat("Warranty refund: %s blew up", C.sold[k].name)); C.rep = fmaxf(0, C.rep - 6); }
@@ -530,7 +597,7 @@ static void TabInventory(float x, float y, float w, float h) {
   Tb(it->name, r.x + 12, r.y + 6, 15, COL_TXT);
   Tx(TextFormat("%.0f hp  %.0f kg  cost $%.0f", it->hp, it->kg, it->costBasis), r.x + 12, r.y + 27, 13, COL_DIM);
   TxR(it->site >= 0 ? TextFormat("%s  $%.0f", SITES[it->site].name, it->price) : "not listed", r.x + r.width - 12, r.y + 8, 14, it->site >= 0 ? COL_ACC : COL_DIM, 1);
-  if (it->site >= 0) TxR(TextFormat("%d days, %d views", it->days, it->views), r.x + r.width - 12, r.y + 27, 12, COL_DIM, 0);
+  if (it->site >= 0) TxR(TextFormat("%d days, %d views, %d lost", it->days, it->views, C.lost[i]), r.x + r.width - 12, r.y + 27, 12, COL_DIM, 0);
   yy += 54;
  }
  if (!any) { Tx("Nothing in stock. Build something in the WORKSHOP.", x, yy, 15, COL_DIM); yy += 26; }
@@ -577,17 +644,27 @@ static void TabInventory(float x, float y, float w, float h) {
  if ((d = UiSelect((Rectangle){rx, ry, rw, 40}, "Marketplace", SITES[pickSite].name, SITES[pickSite].desc, site < 0))) pickSite = (pickSite + d + NSITE) % NSITE;
  ry += 44;
  { float s2 = 13; while (Tw(SITES[pickSite].desc, s2, 0) > rw && s2 > 10) s2 -= 0.5f; Tx(SITES[pickSite].desc, rx, ry, s2, COL_DIM); ry += 22; }
- float pr = it->price;
- if (UiSlider(61, (Rectangle){rx, ry, rw, 40}, "Asking price", &pr, 25, fmaxf(2000, BestValue(it, -1, NULL) * 2.5f), 25, TextFormat("$%.0f", pr), "Scroll for $25 steps (shift = $250). Price above what buyers value and they only make offers.", 1)) it->price = pr;
+ DrawRectangleRounded((Rectangle){rx, ry, rw, 40}, 0.18f, 8, COL_PANEL);
+ Tx("Asking price", rx + 12, ry + 11, 17, COL_DIM);
+ PriceField((Rectangle){rx + rw * 0.4f, ry + 4, rw * 0.3f, 32}, &it->price);
+ if (UiButton((Rectangle){rx + rw * 0.72f, ry + 4, rw * 0.13f - 3, 32}, "-5%", 0, 1)) it->price = roundf(it->price * 0.95f / 5) * 5;
+ if (UiButton((Rectangle){rx + rw * 0.85f + 3, ry + 4, rw * 0.15f - 3, 32}, "+5%", 0, 1)) it->price = roundf(it->price * 1.05f / 5) * 5;
  ry += 44;
+ { int bs; BestValue(it, -1, &bs); int cj = CompFor(bs, it->hp);
+   Tx("Your quality", rx, ry + 2, 15, COL_DIM); Stars(rx + 110, ry + 2, ItemQuality(it));
+   if (cj >= 0) {
+    Tx(TextFormat("Rival: %s %s, %.0f hp, $%.0f", COMPS[cj].co, COMPS[cj].name, COMPS[cj].hp, C.comp[cj].price), rx + 200, ry + 2, 15, COL_TXT);
+    Stars(rx + rw - 66, ry + 2, C.comp[cj].q);
+   } else Tx(TextFormat("No direct rival for %s buyers at this power.", SEG_NAME[bs]), rx + 200, ry + 2, 15, COL_GRN);
+   ry += 26; }
  if ((d = UiSelect((Rectangle){rx, ry, rw, 40}, "Warranty", it->warranty ? "30-day warranty" : "Sold as-is", "With a warranty, buyers pay ~10% more but you refund engines that fail. As-is: no refunds, but failures hurt your reputation more.", site < 0))) it->warranty ^= 1;
  ry += 48;
  float sug = roundf(BestValue(it, pickSite, NULL) / 25) * 25;
  if (UiButton((Rectangle){rx, ry, rw * 0.32f, 40}, TextFormat("PRICE AT $%.0f", sug), 0, sug > 0)) it->price = sug;
  if (site < 0) {
   int ok = C.siteOn[pickSite] && C.rep >= SITES[pickSite].rep;
-  const char *lbl = ok ? "LIST IT" : (C.rep < SITES[pickSite].rep ? TextFormat("NEEDS REP %.0f", SITES[pickSite].rep) : "SIGN UP IN MARKETPLACES");
-  if (UiButton((Rectangle){rx + rw * 0.34f, ry, rw * 0.32f, 40}, lbl, 1, ok)) { it->site = pickSite; it->days = 0; it->views = 0; if (pickSite == 1) Pay(SITES[1].listFee, "SwapBay listing fee"); CareerSave(); }
+  const char *lbl = ok ? "LIST IT" : (C.rep < SITES[pickSite].rep ? TextFormat("NEEDS REP %.0f", SITES[pickSite].rep) : "JOIN IN SITES TAB");
+  if (UiButton((Rectangle){rx + rw * 0.34f, ry, rw * 0.32f, 40}, lbl, 1, ok)) { it->site = pickSite; it->days = 0; it->views = 0; C.lost[gInvSel] = 0; if (pickSite == 1) Pay(SITES[1].listFee, "SwapBay listing fee"); CareerSave(); }
  } else if (UiButton((Rectangle){rx + rw * 0.34f, ry, rw * 0.32f, 40}, "TAKE DOWN", 0, 1)) { it->site = -1; CareerSave(); }
  float whole = roundf(BestValue(it, -1, NULL) * 0.55f / 5) * 5;
  if (UiButton((Rectangle){rx + rw * 0.68f, ry, rw * 0.32f, 40}, TextFormat("DEALER: $%.0f", whole), 3, whole > 0)) { SellItem(gInvSel, whole, -1, "a dealer"); CareerSave(); }
@@ -602,6 +679,53 @@ static void TabInventory(float x, float y, float w, float h) {
    CareerSave();
   }
   break;
+ }
+ (void)h;
+}
+
+static int gPriceEdit = 0; static char gPriceBuf[12];
+static int PriceField(Rectangle r, float *v) {
+ int hov = CheckCollisionPointRec(MP, r), changed = 0;
+ if (hov) { gUiHover = 1; gTip = "Click and type a price, Enter to set."; }
+ if (!gPriceEdit && hov && MPress) { gPriceEdit = 1; snprintf(gPriceBuf, 12, "%.0f", *v); }
+ DrawRectangleRounded(r, 0.2f, 6, (Color){14, 15, 18, 255});
+ if (gPriceEdit) {
+  DrawRectangleRoundedLinesEx(r, 0.2f, 6, 1.5f, COL_ACC);
+  int c; while ((c = GetCharPressed())) { int l = (int)strlen(gPriceBuf); if (c >= '0' && c <= '9' && l < 7) { gPriceBuf[l] = (char)c; gPriceBuf[l + 1] = 0; } }
+  if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && strlen(gPriceBuf)) gPriceBuf[strlen(gPriceBuf) - 1] = 0;
+  if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || (MPress && !hov)) { float nv = (float)atof(gPriceBuf); if (nv >= 1) { *v = nv; changed = 1; } gPriceEdit = 0; SfxPush(SFX_SELECT); }
+  if (IsKeyPressed(KEY_ESCAPE)) gPriceEdit = 0;
+  Tb(TextFormat("$%s%s", gPriceBuf, ((int)(GetTime() * 2)) & 1 ? "_" : ""), r.x + 12, r.y + (r.height - 20) * 0.5f, 20, COL_TXT);
+ } else {
+  Tb(TextFormat("$%.0f", *v), r.x + 12, r.y + (r.height - 20) * 0.5f, 20, hov ? COL_ACC : COL_TXT);
+  TxR("type", r.x + r.width - 10, r.y + (r.height - 13) * 0.5f, 13, COL_DIM, 0);
+ }
+ return changed;
+}
+
+static void TabMarket(float x, float y, float w, float h) {
+ Tb("THE MARKET", x, y, 18, COL_DIM);
+ Tx("Rival engine makers. Sell into their segment and they cut prices to win buyers back; they drift back up when you stop. Buyers pick whoever gives them the better deal for the quality.", x, y + 26, 14, COL_DIM);
+ float yy = y + 58;
+ float cx[] = {x, x + 200, x + 410, x + 620, x + 720, x + 820, x + 930, x + 1050, x + 1170};
+ const char *hd[] = {"Maker", "Engine", "Segment", "Power", "Quality", "Price", "vs normal", "Sales/mo", "Your share"};
+ for (int k = 0; k < 9; k++) Tb(hd[k], cx[k] + 8, yy, 14, COL_DIM);
+ yy += 24;
+ for (int j = 0; j < NCOMP; j++) {
+  const CompDef *d = &COMPS[j]; CompState *cs = &C.comp[j];
+  DrawRectangleRounded((Rectangle){x, yy - 3, w, 26}, 0.2f, 6, j & 1 ? COL_PANEL : (Color){24, 27, 32, 255});
+  Tb(d->co, cx[0] + 8, yy + 2, 14, COL_TXT);
+  Tx(d->name, cx[1] + 8, yy + 2, 14, COL_TXT);
+  Tx(SEG_NAME[d->seg], cx[2] + 8, yy + 2, 14, COL_DIM);
+  Tx(TextFormat("%.0f hp", d->hp), cx[3] + 8, yy + 2, 14, COL_TXT);
+  Stars(cx[4] + 12, yy + 1, cs->q);
+  Tb(TextFormat("$%.0f", cs->price), cx[5] + 8, yy + 2, 14, COL_TXT);
+  float pct = (cs->price / cs->base - 1) * 100;
+  Tx(fabsf(pct) < 1 ? "-" : TextFormat("%+.0f%%", pct), cx[6] + 8, yy + 2, 14, pct < -1 ? COL_RED : (pct > 1 ? COL_GRN : COL_DIM));
+  Tx(TextFormat("%.0f", cs->sales30), cx[7] + 8, yy + 2, 14, COL_TXT);
+  float my = C.mySeg30[d->seg], tot = my + C.compSeg30[d->seg];
+  Tx(tot > 0.5f ? TextFormat("%.0f%%", my / tot * 100) : "-", cx[8] + 8, yy + 2, 14, my > 0.5f ? COL_ACC : COL_DIM);
+  yy += 28;
  }
  (void)h;
 }
@@ -723,9 +847,9 @@ static void ShopScreen(int sw, int sh) {
  if (UiButton((Rectangle){sw - 320, y - 2, 140, 40}, "NEXT DAY", 1, !C.over)) { ShopDay(); SfxPush(SFX_TICK); }
  if (UiButton((Rectangle){sw - 170, y - 2, 150, 40}, "SKIP 7 DAYS", 0, !C.over)) { for (int i = 0; i < 7; i++) { int s0 = C.sales, o0 = 0; for (int o = 0; o < NOFFER; o++) o0 += C.off[o].used; ShopDay(); int o1 = 0; for (int o = 0; o < NOFFER; o++) o1 += C.off[o].used; if (C.sales != s0 || o1 > o0) break; } }
  // tabs
- static const char *T[] = {"DASHBOARD", "WORKSHOP", "MATERIALS", "INVENTORY", "MARKETPLACES", "ADVERTISING", "CONTRACTS", "BANK"};
- float tw = (w) / 8.f, ty = y + 52;
- for (int i = 0; i < 8; i++) {
+ static const char *T[] = {"DASHBOARD", "WORKSHOP", "MATERIALS", "INVENTORY", "MARKET", "SITES", "ADVERTISING", "CONTRACTS", "BANK"};
+ float tw = (w) / 9.f, ty = y + 52;
+ for (int i = 0; i < 9; i++) {
   Rectangle tr = {x + i * tw, ty, tw - 6, 36};
   int hov = CheckCollisionPointRec(MP, tr);
   DrawRectangleRounded(tr, 0.3f, 8, gShopTab == i ? COL_ACC : (hov ? COL_PANEL2 : COL_PANEL));
@@ -740,16 +864,17 @@ static void ShopScreen(int sw, int sh) {
  if (C.over) {
   TxC("BANKRUPT", sw * 0.5f, py + 120, 48, COL_RED, 1);
   TxC("The bank took the shop. Start a new career from the BANK tab.", sw * 0.5f, py + 180, 18, COL_TXT, 0);
-  if (gShopTab != 7) return;
+  if (gShopTab != 8) return;
  }
  switch (gShopTab) {
  case 0: TabDashboard(px, py, pw, ph); break;
  case 1: TabWorkshop(px, py, pw, ph); break;
  case 2: TabMaterials(px, py, pw, ph); break;
  case 3: TabInventory(px, py, pw, ph); break;
- case 4: TabSites(px, py, pw, ph); break;
- case 5: TabAds(px, py, pw, ph); break;
- case 6: TabContracts(px, py, pw, ph); break;
- case 7: TabBank(px, py, pw, ph); break;
+ case 4: TabMarket(px, py, pw, ph); break;
+ case 5: TabSites(px, py, pw, ph); break;
+ case 6: TabAds(px, py, pw, ph); break;
+ case 7: TabContracts(px, py, pw, ph); break;
+ case 8: TabBank(px, py, pw, ph); break;
  }
 }
