@@ -10,10 +10,11 @@ static const FuelDef FUELS[] = {
  {"Nitromethane",  9.5f, 1.85f, 0, 0.65f, "Carries its own oxygen. Insane power, insane cylinder pressure. Knocks easily."},
 };
 #define NFUEL 7
-static const char *LAYOUTS[] = {"Single","Inline","V 60","V 90","Boxer"};
-static const float LAYOUT_HALF[] = {0,0,30,45,90};
-static const int CYLOPT[5][8] = {{1},{2,3,4,5,6,8},{2,4,6,8,10,12,16},{2,4,6,8,10,12,16},{2,4,6,8,12}};
-static const int CYLOPTN[5] = {1,6,7,7,5};
+static const char *LAYOUTS[] = {"Single","Inline","V 60","V 90","Boxer","Custom"};
+static const float LAYOUT_HALF[] = {0,0,30,45,90,0};
+static const int CYLOPT[6][8] = {{1},{2,3,4,5,6,8},{2,4,6,8,10,12,16},{2,4,6,8,10,12,16},{2,4,6,8,12},{1}};
+static const int CYLOPTN[6] = {1,6,7,7,5,1};
+#define NLAYOUT 6
 static const float IMBAL[17] = {0,1.0f,0.7f,0.5f,0.35f,0.25f,0.08f,0,0.15f,0,0.12f,0,0.04f,0,0,0,0.04f};
 
 typedef struct { const char *name; float weight, str, cond, cost; Color col; const char *tip; float maxL, sizeK, heat; } BlockDef;
@@ -166,7 +167,31 @@ typedef struct {
  float tilt;
  int carb, inj, gov;
  int lube; float oilL; int oilCooler;
+ // block design
+ float wall, spacing; int deck, skirt, caps, balShaft, crankFlat;
+ int ignition, camDrive;
+ // custom cylinder layout
+ int ncust; float cAng[16]; int cSlot[16], cFlip[16];
+ // part placement
+ int placeMan; float altAng, stAng; int filtPos, turboSide;
 } Build;
+static float WallMM(const Build *b) { return b->wall > 0.5f ? b->wall : 8.f; }
+static float SpacingMM(const Build *b) { return b->spacing > 0.5f ? b->spacing : 10.f; }
+static const char *DECKS[] = {"Semi-closed", "Open deck", "Closed deck"};
+static const char *DECK_TIP[] = {"Bridges between bores and block. Good balance of strength and cooling.", "Water jacket open at the top. Best cooling, weakest under boost.", "Solid deck around the bores. Strongest for big boost, coolant flow suffers."};
+static const float DECK_STR[] = {1.0f, 0.85f, 1.22f}, DECK_COOL[] = {1.0f, 1.08f, 0.9f}, DECK_COST[] = {0, -40, 180};
+static const char *SKIRTS[] = {"Standard skirt", "Shallow skirt", "Deep skirt", "Bedplate / girdle"};
+static const char *SKIRT_TIP[] = {"Block sides end near the crank centerline.", "Light and cheap; the crank flexes at high rpm.", "Block walls wrap below the crank: stiffer bottom end, heavier.", "Separate one-piece main bearing girdle. Stiffest bottom end there is."};
+static const float SKIRT_STR[] = {1.0f, 0.92f, 1.08f, 1.2f}, SKIRT_RPM[] = {1.0f, 0.95f, 1.03f, 1.07f}, SKIRT_W[] = {1.0f, 0.92f, 1.08f, 1.12f}, SKIRT_COST[] = {0, -30, 120, 450};
+static const char *CAPS[] = {"2-bolt mains", "4-bolt mains", "Cross-bolted mains"};
+static const char *CAPS_TIP[] = {"Two bolts per main cap. Fine for stock power.", "Four bolts per cap: holds the crank down under big power and vibration.", "Caps bolted from the sides too. Race and diesel spec."};
+static const float CAPS_STR[] = {1.0f, 1.08f, 1.15f}, CAPS_VIB[] = {1.0f, 1.35f, 1.7f}, CAPS_COST[] = {0, 90, 260};
+static const char *IGNS[] = {"Stock (auto)", "Points + coil", "Distributor + coil", "CDI", "Coil-on-plug"};
+static const char *IGN_TIP[] = {"Magneto/points on small-engine flywheels, a distributor otherwise.", "Mechanical points. Cheap; weak spark above ~6500 rpm and under boost.", "Distributor with one coil. Good to ~9000 rpm.", "Capacitive discharge. Hot spark, high rpm, works off a magneto or battery.", "Coil per cylinder, computer-timed. Strongest spark; needs a battery."};
+static const float IGN_RPM[] = {0, 6500, 9000, 13000, 16000}, IGN_COST[] = {0, 15, 60, 90, 60};
+static const char *CAMDRV[] = {"Timing chain", "Gear drive", "Timing belt"};
+static const char *CAMDRV_TIP[] = {"Durable roller chain.", "Straight-cut gears. Bulletproof and precise, heavier.", "Rubber belt. Quiet, light, cheap; can snap at very high rpm."};
+static const float CAMDRV_FRIC[] = {1.0f, 1.01f, 0.99f}, CAMDRV_COST[] = {0, 220, -20};
 
 static const Build PRESETS[] = {
  {0,0,0,1, 64,50,8.5f, 1,0,0, 1,0,0, 0,2,0,0,0, 0,0,0,0,2,50, "Push Mower 160cc", 0, 0,0,1, 0,0.6f,0},
@@ -182,6 +207,7 @@ static const Build PRESETS[] = {
 #define NPRESET 9
 
 typedef struct {
+ float prim, sec, rock, vib, vibForce, vibLimit;
  float vcylL, dispL, disp, rpk, veMax, wLo, wHi, floatRpm, pistonRpm, dieselRpm, redline, inertia;
  float imepPk, fric, pLimit, coolCap, danger, heatC, stall, compDrag, idle, weight, cost, lube;
  int hasBatt, needsElec, limitBy, magneto, ninj;
@@ -194,6 +220,153 @@ typedef struct {
 static float Clampf(float x, float a, float b) { return x < a ? a : (x > b ? b : x); }
 static float Smooth01(float x) { x = Clampf(x, 0, 1); return x * x * (3 - 2 * x); }
 static float Lerpf(float a, float b, float t) { return a + (b - a) * t; }
+
+// shared cylinder geometry (mm, crank axis = x): position along crank, bank angle (rad, incl. tilt), bank index
+static float CylPitch(const Build *b) {
+ float p = b->bore * 1.18f + SpacingMM(b);
+ if (b->layout == 5) {
+  int cnt[16] = {0}, mx = 1;
+  for (int i = 0; i < b->ncust; i++) { int sl = b->cSlot[i] & 15; cnt[sl]++; if (cnt[sl] > mx) mx = cnt[sl]; }
+  p *= 1 + 0.24f * (mx - 1);
+ }
+ return p;
+}
+static int CylGeom(const Build *b, float *x, float *a, int *bank) {
+ int n = b->layout == 5 ? b->ncust : b->cyl;
+ float pitch = CylPitch(b), tlt = b->tilt * DEG2RAD, half = LAYOUT_HALF[b->layout] * DEG2RAD;
+ if (b->layout == 5) {
+  int used[16] = {0}, order[16], ns = 0;
+  for (int i = 0; i < n; i++) used[b->cSlot[i] & 15] = 1;
+  for (int s2 = 0; s2 < 16; s2++) order[s2] = used[s2] ? ns++ : -1;
+  int cnt[16] = {0}, idx[16];
+  for (int i = 0; i < n; i++) idx[i] = cnt[b->cSlot[i] & 15]++;
+  for (int i = 0; i < n; i++) {
+   int sl = b->cSlot[i] & 15, k = order[sl], m = cnt[sl];
+   x[i] = (k - (ns - 1) * 0.5f) * pitch + (idx[i] - (m - 1) * 0.5f) * pitch * 0.24f / (1 + 0.24f * 0) ;
+   a[i] = b->cAng[i] * DEG2RAD + tlt;
+   bank[i] = sinf(a[i]) >= -0.01f ? 0 : 1;
+  }
+  return n;
+ }
+ int nb = b->layout >= 2 ? 2 : 1, m = nb == 2 ? (n + 1) / 2 : n;
+ for (int i = 0; i < n; i++) {
+  if (nb == 2) { int bk = i & 1, j = i >> 1; bank[i] = bk; a[i] = (bk ? -half : half) + tlt; x[i] = (j - (m - 1) * 0.5f) * pitch + (bk ? 0.12f : -0.12f) * pitch; }
+  else { bank[i] = 0; a[i] = tlt; x[i] = (i - (n - 1) * 0.5f) * pitch; }
+ }
+ return n;
+}
+static int NumCyl(const Build *b) { return b->layout == 5 ? (b->ncust < 1 ? 1 : b->ncust) : b->cyl; }
+// custom crank: each throw gets an angle; a cylinder's TDC = throw + its bank angle.
+// throws are searched for the smoothest, most even-firing crank and cached.
+static void CustFireFrom(const Build *b, const float *thr, float *fire) {
+ int n = b->ncust; float cyc = b->cycle ? 360.f : 720.f;
+ int idx[16]; float t[16];
+ for (int i = 0; i < n; i++) { t[i] = fmodf(thr[b->cSlot[i] & 7] + b->cAng[i] + 720.f, 360.f); idx[i] = i; }
+ for (int i = 1; i < n; i++) for (int k = i; k > 0 && t[idx[k]] < t[idx[k - 1]]; k--) { int q = idx[k]; idx[k] = idx[k - 1]; idx[k - 1] = q; }
+ for (int k = 0; k < n; k++) fire[idx[k]] = t[idx[k]] + ((!b->cycle && (k & 1)) ? 360.f : 0.f);
+ (void)cyc;
+}
+static float CustCost(const Build *b, const float *thr) {
+ int n = b->ncust; float fire[16], cyc = b->cycle ? 360.f : 720.f, lam = 1.f / 3.5f;
+ CustFireFrom(b, thr, fire);
+ float x[16], a[16]; int bk[16]; CylGeom(b, x, a, bk);
+ float pitch = CylPitch(b), f1x = 0, f1n = 1e9f, f2x = 0, m1x = 0, m1n = 1e9f;
+ for (int t = 0; t < 360; t += 6) {
+  float th = t * DEG2RAD, f1y = 0, f1z = 0, f2y = 0, f2z = 0, my = 0, mz = 0;
+  for (int i = 0; i < n; i++) { float ph = th - fire[i] * DEG2RAD, c1 = cosf(ph), c2 = lam * cosf(2 * ph), uy = cosf(a[i]), uz = sinf(a[i]), xr = x[i] / pitch;
+   f1y += c1 * uy; f1z += c1 * uz; f2y += c2 * uy; f2z += c2 * uz; my += xr * c1 * uy; mz += xr * c1 * uz; }
+  float f1 = sqrtf(f1y * f1y + f1z * f1z), m1 = sqrtf(my * my + mz * mz);
+  f1x = fmaxf(f1x, f1); f1n = fminf(f1n, f1); f2x = fmaxf(f2x, sqrtf(f2y * f2y + f2z * f2z)); m1x = fmaxf(m1x, m1); m1n = fminf(m1n, m1);
+ }
+ float s[16]; for (int i = 0; i < n; i++) s[i] = fmodf(fire[i], cyc);
+ for (int i = 1; i < n; i++) for (int k = i; k > 0 && s[k] < s[k - 1]; k--) { float q = s[k]; s[k] = s[k - 1]; s[k - 1] = q; }
+ float gmax = s[0] + cyc - s[n - 1], gmin = gmax;
+ for (int i = 1; i < n; i++) { gmax = fmaxf(gmax, s[i] - s[i - 1]); gmin = fminf(gmin, s[i] - s[i - 1]); }
+ float uneven = n > 1 ? (gmax - gmin) / (cyc / n) : 0;
+ return ((f1x - f1n) * 0.5f + f2x + (m1x - m1n) * 0.3f) / (0.79f * n) + 0.35f * uneven;
+}
+static void CustomFire(const Build *b, float *fire) {
+ static Build key; static float best[8]; static int have = 0;
+ int n = b->ncust < 1 ? 1 : b->ncust;
+ if (b->ncust < 1) { fire[0] = 0; return; }
+ if (!have || key.ncust != b->ncust || key.cycle != b->cycle || key.bore != b->bore || key.spacing != b->spacing ||
+     memcmp(key.cAng, b->cAng, sizeof key.cAng) || memcmp(key.cSlot, b->cSlot, sizeof key.cSlot)) {
+  int used[8] = {0}, ns = 0;
+  for (int i = 0; i < n; i++) used[b->cSlot[i] & 7] = 1;
+  for (int k = 0; k < 8; k++) ns += used[k];
+  float cur[8] = {0}, bc;
+  int step = ns <= 2 ? 180 : (ns <= 4 ? 90 : 45);
+  for (int k = 0, j = 0; k < 8; k++) if (used[k]) { cur[k] = (float)((j * 360 / ns) % 360); j++; }
+  memcpy(best, cur, sizeof cur); bc = CustCost(b, cur);
+  unsigned r = 99;
+  for (int it = 0; it < 160; it++) {
+   for (int k = 0; k < 8; k++) if (used[k]) { r = r * 1103515245u + 12345u; cur[k] = (float)(((r >> 16) % (360 / step)) * step); }
+   for (int pass = 0; pass < 2; pass++) for (int k = 1; k < 8; k++) if (used[k]) {
+    float keep = cur[k], kc = CustCost(b, cur), bk = keep;
+    for (int v = 0; v < 360; v += step) { cur[k] = (float)v; float c = CustCost(b, cur); if (c < kc - 1e-4f) { kc = c; bk = cur[k]; } }
+    cur[k] = bk;
+   }
+   float c = CustCost(b, cur);
+   if (c < bc - 1e-4f) { bc = c; memcpy(best, cur, sizeof cur); }
+   if (ns <= 1) break;
+  }
+  key = *b; have = 1;
+ }
+ CustFireFrom(b, best, fire);
+}
+static void FireAngles(const Build *b, float *fire) {
+ int n = NumCyl(b);
+ float cyc = b->cycle ? 360.f : 720.f;
+ static const int FO3[] = {1,2,3}, FO4[] = {1,3,4,2}, FO5[] = {1,2,4,5,3}, FO6[] = {1,5,3,6,2,4}, FO8[] = {1,6,2,5,8,3,7,4};
+ static const int FOV4[] = {1,3,2,4}, FOV6[] = {1,4,2,5,3,6}, FOV8[] = {1,8,4,3,6,5,7,2}, FOV10[] = {1,6,5,10,2,7,3,8,4,9}, FOV12[] = {1,7,5,11,3,9,6,12,2,8,4,10};
+ static const int FOB4[] = {1,3,2,4}, FOB6[] = {1,6,2,4,3,5};
+ const int *fo = NULL;
+ for (int i = 0; i < n; i++) fire[i] = cyc * i / n;
+ if (b->layout == 5) { CustomFire(b, fire); return; }
+ int nb = b->layout >= 2 ? 2 : 1;
+ if (!b->cycle) {
+  if (nb == 1) fo = n == 3 ? FO3 : n == 4 ? FO4 : n == 5 ? FO5 : n == 6 ? FO6 : n == 8 ? FO8 : NULL;
+  else if (b->layout == 4) fo = n == 4 ? FOB4 : n == 6 ? FOB6 : NULL;
+  else fo = n == 4 ? FOV4 : n == 6 ? FOV6 : n == 8 ? FOV8 : n == 10 ? FOV10 : n == 12 ? FOV12 : NULL;
+ }
+ if (fo) for (int slot = 0; slot < n; slot++) fire[fo[slot] - 1] = cyc * slot / n;
+ if (!b->cycle && (b->layout == 2 || b->layout == 3) && n >= 4 && n != 8) {
+  int m = n / 2; float bf[8];
+  const int *io = m == 3 ? FO3 : m == 4 ? FO4 : m == 5 ? FO5 : m == 6 ? FO6 : m == 8 ? FO8 : NULL;
+  for (int j = 0; j < m; j++) bf[j] = 720.f * j / m;
+  if (io) for (int k = 0; k < m; k++) bf[io[k] - 1] = 720.f * k / m;
+  if (m == 2) { bf[0] = 0; bf[1] = 360; }
+  for (int j = 0; j < m; j++) { fire[2 * j] = bf[j]; fire[2 * j + 1] = fmodf(bf[j] + 2 * LAYOUT_HALF[b->layout], 720.f); }
+ }
+ if (!b->cycle && n == 8 && nb == 2 && b->layout != 4 && b->crankFlat) {
+  static const int i4[4] = {0, 2, 3, 1};
+  for (int k = 0; k < 4; k++) { fire[2 * i4[k]] = 180.f * k; fire[2 * i4[k] + 1] = 180.f * k + 90.f; }
+ }
+ if (n == 2 && b->layout >= 2 && b->layout <= 3) fire[1] = b->cycle ? 180.f : 360.f - 2 * LAYOUT_HALF[b->layout];
+}
+// balance: residual shaking forces/couples after crank counterweights (rotating primary is cancellable)
+static void Balance(const Build *b, float *prim, float *sec, float *rock, float *vib) {
+ float x[16], a[16], fire[16]; int bank[16];
+ int n = CylGeom(b, x, a, bank);
+ FireAngles(b, fire);
+ float lam = 1.f / 3.5f, pitch = CylPitch(b);
+ float f1max = 0, f1min = 1e9f, f2max = 0, m1max = 0, m1min = 1e9f, m2max = 0;
+ for (int t = 0; t < 360; t += 2) {
+  float th = t * DEG2RAD, f1y = 0, f1z = 0, f2y = 0, f2z = 0, m1y = 0, m1z = 0, m2y = 0, m2z = 0;
+  for (int i = 0; i < n; i++) {
+   float ph = th - fire[i] * DEG2RAD;
+   float c1 = cosf(ph), c2 = lam * cosf(2 * ph), uy = cosf(a[i]), uz = sinf(a[i]), xr = x[i] / pitch;
+   f1y += c1 * uy; f1z += c1 * uz; f2y += c2 * uy; f2z += c2 * uz;
+   m1y += xr * c1 * uy; m1z += xr * c1 * uz; m2y += xr * c2 * uy; m2z += xr * c2 * uz;
+  }
+  float f1 = sqrtf(f1y * f1y + f1z * f1z), f2 = sqrtf(f2y * f2y + f2z * f2z), m1 = sqrtf(m1y * m1y + m1z * m1z), m2 = sqrtf(m2y * m2y + m2z * m2z);
+  f1max = fmaxf(f1max, f1); f1min = fminf(f1min, f1); f2max = fmaxf(f2max, f2); m1max = fmaxf(m1max, m1); m1min = fminf(m1min, m1); m2max = fmaxf(m2max, m2);
+ }
+ float rp = (f1max - f1min) * 0.5f, rs = f2max, rm = (m1max - m1min) * 0.5f + m2max;
+ if (b->balShaft) { rp *= 0.4f; rs *= 0.2f; rm *= 0.6f; }
+ *prim = rp; *sec = rs; *rock = rm;
+ *vib = (rp + rs + rm * 0.6f) / (0.79f * n);
+}
 
 static float VE(const Build *b, const Spec *s, float rpm) {
  float x = rpm - s->rpk, w = x < 0 ? s->wLo : s->wHi;
@@ -266,6 +439,18 @@ static int PartStatus(const Build *b, const Spec *s, int cat, char *why, int n) 
  switch (cat) {
  case P_BLOCK: {
   const BlockDef *bd = &BLOCKS[b->block];
+  if (b->layout == 5) {
+   if (b->ncust < 1) { snprintf(why, n, "No cylinders placed. Add some in BLOCK > CYLINDERS."); return 3; }
+   float xx[16], aa[16]; int bb[16]; int nc = CylGeom(b, xx, aa, bb);
+   float rr = b->stroke * 0.5f, v0 = rr * 1.25f + 10, deck = rr + 1.75f * b->stroke + 0.25f * b->bore + 1, mid = (v0 + deck) * 0.5f;
+   float dmin = 2 * asinf(Clampf(0.55f * b->bore / mid, 0, 1));
+   for (int i = 0; i < nc; i++) for (int j = i + 1; j < nc; j++) {
+    if (b->cSlot[i] != b->cSlot[j]) continue;
+    float d = fabsf(remainderf(aa[i] - aa[j], 2 * PI));
+    if (d < dmin) { snprintf(why, n, "Cylinders %d and %d collide: need %.0f+ deg apart on the same throw.", i + 1, j + 1, dmin * RAD2DEG); return 3; }
+   }
+   if (!b->cycle && b->lube != 2) for (int i = 0; i < nc; i++) if (cosf(aa[i]) < -0.15f) { snprintf(why, n, "Cylinder %d points down into the oil pan: needs a dry sump.", i + 1); return 3; }
+  }
   if (s->dispL > bd->maxL) { snprintf(why, n, "%s is unviable at %.1f L (max ~%.1f L): too weak at that size.", bd->name, s->dispL, bd->maxL); return 3; }
   if (s->blockEff < bd->str * 0.65f) { snprintf(why, n, "Big casting: strength down to %.0f%% of a small one.", 100 * s->blockEff / bd->str); return 1; }
   return 0; }
@@ -343,7 +528,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
  if (two) { s->wLo *= 0.8f; s->wHi *= 0.6f; }
  {
   float mp = powf(b->bore / 86.f, 3.f) * INTERN[b->internals].mass;
-  s->pistonRpm = 9400.f * sqrtf(INTERN[b->internals].str / (mp * (b->stroke / 86.f)));
+  s->pistonRpm = 9400.f * sqrtf(INTERN[b->internals].str / (mp * (b->stroke / 86.f))) * SKIRT_RPM[b->skirt] * (b->caps ? 1.02f : 1.f);
  }
  s->dieselRpm = f->diesel ? 4600 * powf(90.f / b->bore, 0.35f) : 1e9f;
  float lim = s->pistonRpm; s->limitBy = 0;
@@ -355,7 +540,7 @@ static void ComputeSpec(const Build *b, Spec *s) {
  s->inertia = (0.012f + 0.075f * s->dispL * INTERN[b->internals].mass) * FLY[b->flywheel].mul + 0.004f * b->cyl;
  float th = (1 - powf(b->cr, -0.28f)) / (1 - powf(10, -0.28f));
  s->imepPk = (two ? 12.0f : (f->diesel ? 9.6f : 14.0f)) * th * f->energy;
- s->fric = two ? 0.9f : OILS[b->oil].fric;
+ s->fric = (two ? 0.9f : OILS[b->oil].fric) * (two ? 1 : CAMDRV_FRIC[b->camDrive]) * (b->balShaft ? 1.03f : 1.f);
  {
   const BlockDef *bd = &BLOCKS[b->block];
   s->blockEff = bd->str * Clampf(powf(fmaxf(s->dispL, 0.05f) / 1.5f, -bd->sizeK), 0.2f, 1.25f);
@@ -363,10 +548,12 @@ static void ComputeSpec(const Build *b, Spec *s) {
   float ik = 0.12f * (1.6f - INTERN[b->internals].str);
   s->intEff = INTERN[b->internals].str * Clampf(powf(fmaxf(s->vcylL, 0.02f) / 0.5f, -ik), 0.5f, 1.2f);
   float crPen = Clampf((b->cr - (bd->str < 0.9f ? 11.f : 14.f)) * 0.04f, 0, 0.4f);
+  s->blockEff *= sqrtf(WallMM(b) / 8.f) * DECK_STR[b->deck] * SKIRT_STR[b->skirt] * CAPS_STR[b->caps];
   s->pLimit = 27.f * s->blockEff * s->intEff * (1 - crPen);
  }
  s->coolCap = COOL[b->cooling].cap * powf(s->dispL, 0.85f) * (b->cooling == 0 ? BLOCKS[b->block].cond : 1.f);
- s->danger = COOL[b->cooling].danger + (two ? 0 : OILS[b->oil].hot) + BLOCKS[b->block].heat * (b->cooling == 0 ? 1.6f : 1.f);
+ s->danger = COOL[b->cooling].danger + (two ? 0 : OILS[b->oil].hot) + BLOCKS[b->block].heat * (b->cooling == 0 ? 1.6f : 1.f) - (SpacingMM(b) < 8 ? (8 - SpacingMM(b)) * 2.f : 0);
+ s->coolCap *= DECK_COOL[b->deck] * powf(8.f / WallMM(b), 0.12f);
  s->heatC = (9000 * s->dispL + 3000) * (b->cooling ? 1.6f : 1.f);
  const StarterDef *st = &STARTERS[b->starter];
  s->stall = st->elec ? 150.f * st->power : st->power;
@@ -394,17 +581,21 @@ static void ComputeSpec(const Build *b, Spec *s) {
   float dens = powf(1 + b->boost * spT / 14.7f, b->intercooler ? 0.84f : 0.68f);
   s->needCfm = CfmNeed(b, s, topNeed, VE(b, s, topNeed), dens);
  }
- int nb = (b->layout >= 2) ? 2 : 1;
+ int nb = (b->layout >= 2 && b->layout != 5) ? 2 : 1;
+ if (b->layout == 5) { float xx[16], aa[16]; int bb[16]; int n2 = CylGeom(b, xx, aa, bb), seen0 = 0, seen1 = 0; for (int i = 0; i < n2; i++) { if (bb[i]) seen1 = 1; else seen0 = 1; } nb = seen0 + seen1; if (nb < 1) nb = 1; }
+ Balance(b, &s->prim, &s->sec, &s->rock, &s->vib);
+ s->vibForce = (s->prim + s->sec + s->rock * 0.6f) * s->vcylL * (b->stroke / 86.f) * INTERN[b->internals].mass;
+ s->vibLimit = 60.f * CAPS_VIB[b->caps] * SKIRT_STR[b->skirt] * (b->internals >= 2 ? 1.25f : 1.f);
  float L = s->dispL;
  float vtw = two ? 0.5f : (b->valvetrain == 0 ? 0.7f : (b->valvetrain == 1 ? 0.9f : (b->valvetrain == 2 ? 1.0f : 1.15f)));
- float blockKg = (3 + 22 * powf(L, 0.85f) + 1.2f * b->cyl) * BLOCKS[b->block].weight;
+ float blockKg = (3 + 22 * powf(L, 0.85f) + 1.2f * b->cyl) * BLOCKS[b->block].weight * (0.55f + 0.45f * WallMM(b) / 8.f) * SKIRT_W[b->skirt] * (b->deck == 2 ? 1.04f : (b->deck == 1 ? 0.97f : 1.f)) * (0.85f + 0.15f * SpacingMM(b) / 10.f);
  float headKg = (1.5f + 4 * L) * vtw * nb * 0.7f * (BLOCKS[b->block].weight < 0.7f ? 0.8f : 1.f);
  float intKg = (0.8f + 5 * L) * INTERN[b->internals].mass;
  float flyKg = (1 + 5 * powf(L, 0.7f)) * FLY[b->flywheel].mul * 0.8f;
  float accKg = (b->forced == 3 ? 18 : (b->forced == 4 ? 20 : (b->forced ? 9 : 0))) + (b->forced && b->intercooler ? 6 : 0)
   + (b->alternator >= 3 ? 6 : (b->alternator ? 1 : 0)) + (st->elec ? 1 + 2.5f * st->power : 0.8f) + (b->cooling == 1 ? 8 + 4 * L : (b->cooling == 2 ? 12 + 6 * L : 0))
   + 1 + 3 * L + (two ? 0 : 0.5f + 1.5f * L);
- s->weight = blockKg + headKg + intKg + flyKg + accKg;
+ s->weight = blockKg + headKg + intKg + flyKg + accKg + (b->balShaft ? 2 + 2.5f * L : 0) + (b->camDrive == 1 ? 1 + L : 0);
  // cost: materials + machining + bought parts (catalog prices are retail; volume buys at ~35%)
  static const float MATKG[] = {1.3f, 2.5f, 2.0f, 8.f, 6.f};
  static const float MACH[] = {1.0f, 0.75f, 1.3f, 1.4f, 5.0f};
@@ -422,7 +613,9 @@ static void ComputeSpec(const Build *b, Spec *s) {
   + FILTERS[b->filter].cost * (0.3f + 0.35f * sqrtf(L)) + FORCED[b->forced].cost * Clampf(sqrtf(L / 2.f), 0.4f, 1.6f) + (b->forced && b->intercooler ? 450 * sz : 0)
   + COOL[b->cooling].cost * (0.3f + 0.35f * L) + EXH[b->exhaust].cost * (0.05f + 0.6f * sz)
   + st->cost + ALTS[b->alternator].cost + FLY[b->flywheel].cost + (b->gov == 3 ? 60 : (b->gov ? 12 : 0)) + (b->fuel == 6 ? 300 : 0)
-  + (two ? 0 : (b->lube == 0 ? 1 : (b->lube == 1 ? 25 + 15 * L : 900 + 200 * L))) + (b->oilCooler ? 80 + 40 * L : 0);
+  + (two ? 0 : (b->lube == 0 ? 1 : (b->lube == 1 ? 25 + 15 * L : 900 + 200 * L))) + (b->oilCooler ? 80 + 40 * L : 0)
+  + (DECK_COST[b->deck] + SKIRT_COST[b->skirt]) * (0.4f + 0.3f * L) + CAPS_COST[b->caps] * (0.3f + 0.1f * b->cyl) + (b->balShaft ? 120 + 60 * L : 0)
+  + IGN_COST[b->ignition] * (b->ignition == 4 ? b->cyl * 0.5f : 1) + (two ? 0 : CAMDRV_COST[b->camDrive] * (0.5f + 0.25f * L));
  s->mfgOne = matl * 1.6f + hours * 95.f + bought + 200;
  s->mfgK = matl * 0.85f + hours * 0.12f * 40.f + bought * 0.25f + 4 + 3 * b->cyl;
  s->cost = s->mfgK * 1.7f;
@@ -514,13 +707,19 @@ static int BuildWarnings(const Build *b, const Spec *s, char out[][96], int *sev
  if (b->cycle == 0 && fabsf(b->tilt) > 50) W(1, "Cylinders laid over %.0f deg: wet sump drains badly.", fabsf(b->tilt));
  if (b->layout >= 2 && fabsf(b->tilt) > 30) W(1, "Tilting a V/boxer that far puts a bank near the floor.");
  if (b->gov == 0) W(1, "No governor or limiter: nothing stops it over-revving.");
+ if (!b->cycle && b->camDrive == 2 && s->topRpm > 9000) W(2, "Timing belt above ~9000 rpm: it will jump teeth or snap.");
+ if (b->ignition == 4 && !s->hasBatt) W(3, "Coil-on-plug needs a battery. Add electric start or a charging system.");
+ if (b->ignition == 2 && !s->hasBatt) W(3, "A distributor coil needs a battery. Use points/CDI on a magneto.");
+ { int ig = b->ignition ? b->ignition : (s->magneto ? 3 : 2); if (s->topRpm > IGN_RPM[ig] * 1.05f && !FUELS[b->fuel].diesel) W(1, "%s ignition weakens above ~%.0f rpm: misfires up top.", IGNS[ig], IGN_RPM[ig]); }
+ if (s->vibForce * powf(s->topRpm / 1000.f, 2) > s->vibLimit) W(2, "Shakes too hard at %.0f rpm: the crank will crack. Balance it or rev less.", s->topRpm);
+ else if (s->vib > 0.6f && NumCyl(b) > 2) W(1, "Rough-running layout (vibration %.0f%%). Balance shafts help.", s->vib * 100);
 #undef W
  return n;
 }
 
 // ===== live simulation =====
-enum { DMG_KNOCK, DMG_ROD, DMG_VALVE, DMG_PRESS, DMG_HEAT, DMG_OILP, DMG_LUBE, DMG_DIRT, DMG_TURBO, DMG_FLY, DMG_LEAN, DMG_N };
-static const char *DMG_TITLE[] = {"Holed piston","Thrown rod","Dropped valve","Blown head gasket","Seized engine","Spun bearing","Seized piston","Scored cylinders","Turbo grenade","Flywheel exploded","Melted piston (lean)"};
+enum { DMG_KNOCK, DMG_ROD, DMG_VALVE, DMG_PRESS, DMG_HEAT, DMG_OILP, DMG_LUBE, DMG_DIRT, DMG_TURBO, DMG_FLY, DMG_LEAN, DMG_VIB, DMG_BELT, DMG_N };
+static const char *DMG_TITLE[] = {"Holed piston","Thrown rod","Dropped valve","Blown head gasket","Seized engine","Spun bearing","Seized piston","Scored cylinders","Turbo grenade","Flywheel exploded","Melted piston (lean)","Cracked crankshaft","Snapped timing belt"};
 
 typedef struct {
  float omega, angle, rpm;
@@ -587,7 +786,9 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  } else m->starterHeat = fmaxf(0, m->starterHeat - dt * 0.25f);
  // combustion quality
  float q = 1;
- int spark = f->diesel || s->magneto || (s->hasBatt && m->volts > 8.5f);
+ int ig = b->ignition ? b->ignition : (s->magneto ? 3 : 2);
+ int battOk = s->hasBatt && m->volts > 8.5f;
+ int spark = f->diesel || ((ig == 1 || ig == 3) ? (s->magneto || battOk) : battOk);
  if (!m->ign || m->failed || !spark) q = 0;
  if (f->diesel) {
   if (b->delivery != 3 && b->delivery != 4) q = 0;
@@ -605,6 +806,10 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
  }
  if (s->needsElec && (!s->hasBatt || m->volts < 9.f)) q = 0;
  if (b->cycle == 1 && s->lube > 2.2f) q *= Clampf(1 - 0.25f * (s->lube - 2.2f), 0.4f, 1);
+ if (!f->diesel) {
+  q *= 1 - Clampf((rpm - IGN_RPM[ig]) / 3000.f, 0, 0.6f);
+  if (ig <= 2) q *= 1 - Clampf((m->boost - 15) / 30.f, 0, 0.4f);
+ }
  if (rpm < 90) q = 0;
  if (b->gov == 3 && m->limiter) { if (rpm > s->redline) m->cut = 1; else if (rpm < s->redline - 180) m->cut = 0; } else m->cut = 0;
  if (m->cut) q = 0;
@@ -754,6 +959,8 @@ static void SimStep(Sim *m, const Build *b, const Spec *s, float dt, int starter
   if (b->forced && b->boost > FORCED[b->forced].maxb) m->dmgRate[DMG_TURBO] = m->spool * (b->boost / FORCED[b->forced].maxb - 1) * 25.f;
   if (rpm > FLY[b->flywheel].maxRpm) m->dmgRate[DMG_FLY] = (rpm / FLY[b->flywheel].maxRpm - 1) * 700.f + 3.f;
   if (m->lean > 1.02f && !f->diesel) m->dmgRate[DMG_LEAN] = (m->lean - 1) * 70.f;
+  { float vf = s->vibForce * (rpm / 1000.f) * (rpm / 1000.f); if (vf > s->vibLimit) m->dmgRate[DMG_VIB] = (vf / s->vibLimit - 1) * 40.f; }
+  if (!b->cycle && b->camDrive == 2 && rpm > 9000) m->dmgRate[DMG_BELT] = (rpm / 9000.f - 1) * 300.f;
  }
  if (!gDev && !m->failed) {
   float tot = 0;

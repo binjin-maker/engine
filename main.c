@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include "font_reg.h"
 #include "font_bold.h"
 #include "sim.c"
@@ -67,7 +68,16 @@ static const char *SavePath(void) { return TextFormat("%sengine_garage.sav", Get
 static void SaveWrite(void) { gSave.magic = 0x454E4731; gSave.ver = 1; SaveFileData(SavePath(), &gSave, sizeof gSave); }
 static void SaveRead(void) {
  int sz = 0; unsigned char *d = LoadFileData(SavePath(), &sz);
- if (d && sz == (int)sizeof gSave) { memcpy(&gSave, d, sizeof gSave); if (gSave.magic != 0x454E4731) memset(&gSave, 0, sizeof gSave); }
+ memset(&gSave, 0, sizeof gSave);
+ if (d && sz >= 12 && *(int *)d == 0x454E4731) {
+  int bs = (sz - 8 - 16 - 4) / 4;
+  if (bs > 0 && bs <= (int)sizeof(Build) && 8 + 4 * bs + 16 + 4 == sz) {
+   for (int i = 0; i < 4; i++) memcpy(&gSave.slot[i], d + 8 + i * bs, bs);
+   memcpy(gSave.used, d + 8 + 4 * bs, 16); memcpy(&gSave.ach, d + 8 + 4 * bs + 16, 4);
+   gSave.magic = 0x454E4731;
+   if (bs <= (int)offsetof(Build, lube)) for (int i = 0; i < 4; i++) if (!gSave.slot[i].cycle) { gSave.slot[i].lube = 1; gSave.slot[i].oilL = 1.f + 0.6f * gSave.slot[i].bore * gSave.slot[i].bore * gSave.slot[i].stroke * gSave.slot[i].cyl * 7.85e-7f; }
+  }
+ }
  if (d) UnloadFileData(d);
 }
 static const char *CfgPath(void) { return TextFormat("%sengine_garage.cfg", GetApplicationDirectory()); }
@@ -168,6 +178,21 @@ static const char *PartTip(int cat, const char *base) {
 }
 static int Cyc(int v, int d, int n) { v += d; if (v < 0) v = n - 1; if (v >= n) v = 0; return v; }
 
+static const char *CustomKind(const Build *b, int shortForm) {
+ float ang[16]; int na = 0, slots = 0, used[16] = {0};
+ for (int i = 0; i < b->ncust; i++) {
+  int f = 0; for (int k = 0; k < na; k++) if (fabsf(remainderf(ang[k] - b->cAng[i], 360)) < 2) f = 1;
+  if (!f) ang[na++] = b->cAng[i];
+  if (!used[b->cSlot[i] & 15]) { used[b->cSlot[i] & 15] = 1; slots++; }
+ }
+ if (b->ncust <= 1) return "Single";
+ if (na == 1) return fabsf(ang[0]) > 120 ? (shortForm ? "Inv-I" : "Inverted inline") : (shortForm ? "I" : "Inline");
+ if (slots == 1 && na >= 3) return "Radial";
+ if (na == 2) return fabsf(fabsf(remainderf(ang[0] - ang[1], 360)) - 180) < 2 ? (shortForm ? "Flat-" : "Boxer") : "V";
+ if (na == 3) return "W";
+ if (na == 4) return "X";
+ return shortForm ? "Cust" : "Custom";
+}
 // ===== build helpers =====
 static void BuildName(const Build *b, char *out, int n) {
  if (b->name[0]) { snprintf(out, n, "%s", b->name); return; }
@@ -177,14 +202,16 @@ static void BuildName(const Build *b, char *out, int n) {
   if (!memcmp(&p, b, sizeof p)) { snprintf(out, n, "%s", PRESETS[i].name); return; }
  }
  Spec s; ComputeSpec(b, &s);
- const char *lay = b->layout == 0 ? "Single" : (b->layout == 1 ? "I" : (b->layout == 4 ? "Flat-" : "V"));
- char cyl[16]; if (b->layout == 0) snprintf(cyl, 16, "Single"); else snprintf(cyl, 16, "%s%d", lay, b->cyl);
+ const char *lay = b->layout == 5 ? CustomKind(b, 1) : (b->layout == 0 ? "Single" : (b->layout == 1 ? "I" : (b->layout == 4 ? "Flat-" : "V")));
+ char cyl[16]; if (b->layout == 0 || (b->layout == 5 && b->ncust <= 1)) snprintf(cyl, 16, "Single"); else snprintf(cyl, 16, lay[strlen(lay) - 1] >= 'a' ? "%s-%d" : "%s%d", lay, b->cyl);
  snprintf(out, n, "Custom %s %.1fL%s%s", cyl, s.dispL, b->forced ? (b->forced == 4 ? " Blown" : " Turbo") : "", b->cycle ? " 2T" : (FUELS[b->fuel].diesel ? " Diesel" : ""));
 }
 static void FixBuild(Build *b) {
+ if (b->layout == 5) { if (b->ncust > 16) b->ncust = 16; b->cyl = b->ncust < 1 ? 1 : b->ncust; if (b->forced == 0) b->intercooler = 0; if (b->cycle == 1 && b->valvetrain > 2) b->valvetrain = 2; return; }
  if (b->cycle == 1) { if (b->valvetrain > 2) b->valvetrain = 2; }
  else if (b->exhaust == 3) b->exhaust = 1;
  int ok = 0;
+ if (b->layout > 5) b->layout = 0;
  for (int i = 0; i < CYLOPTN[b->layout]; i++) if (CYLOPT[b->layout][i] == b->cyl) ok = 1;
  if (!ok) {
   int best = CYLOPT[b->layout][0];
@@ -201,13 +228,17 @@ static void OnBuildChanged(void) {
  GeoCompute(&gB, &gS);
  OilPathsBuild(&gB);
  gNWarn = BuildWarnings(&gB, &gS, gWarn, gWarnSev, 16);
+ if (G.attachErr[0] && gNWarn < 16) {
+  for (int i = gNWarn; i > 0; i--) { memcpy(gWarn[i], gWarn[i - 1], 96); gWarnSev[i] = gWarnSev[i - 1]; }
+  snprintf(gWarn[0], 96, "DOESN'T ATTACH: %s", G.attachErr); gWarnSev[0] = 3; gNWarn++;
+ }
  if (G.solveLeft) {
   int ba = -1, bb = -1, bv = 0;
   for (int a = 0; a < G_N; a++) for (int c = 0; c < G_N; c++) if (gConf[a][c] + gConf[c][a] > bv) { bv = gConf[a][c] + gConf[c][a]; ba = a; bb = c; }
   if (ba >= 0 && gNWarn < 16) {
    for (int i = gNWarn; i > 0; i--) { memcpy(gWarn[i], gWarn[i - 1], 96); gWarnSev[i] = gWarnSev[i - 1]; }
-   snprintf(gWarn[0], 96, "Packaging: the %s runs into the %s. Try another layout or part.", GROUP_NAME[ba], GROUP_NAME[bb]);
-   gWarnSev[0] = 1; gNWarn++;
+   snprintf(gWarn[0], 96, "%s: the %s runs into the %s. %s", gB.placeMan ? "CAN'T MOUNT" : "Packaging", GROUP_NAME[ba], GROUP_NAME[bb], gB.placeMan ? "Move it." : "Try another layout or part.");
+   gWarnSev[0] = gB.placeMan ? 3 : 1; gNWarn++;
   }
  }
 }
@@ -309,7 +340,7 @@ static void Scene3D(Camera3D cam) {
  Vector3 bg = {COL_BG.r / 255.f, COL_BG.g / 255.f, COL_BG.b / 255.f};
  DrawFloor(bg, (Vector3){0, 0, 0}, fmaxf(G.L, G.ccW + 300) * 0.01f * 0.75f);
  DrawStand(&G);
- float imb = IMBAL[gB.cyl > 16 ? 16 : gB.cyl] * (gB.layout == 4 ? 0.4f : (gB.layout >= 2 ? 0.8f : 1.f));
+ float imb = Clampf(gS.vib, 0, 1.5f) + 0.03f;
  float act = gM.running ? 1.f : (gM.rpm > 30 ? 0.4f : 0);
  imb *= 1 - 0.35f * fabsf(sinf(gB.tilt * DEG2RAD)) * (gB.cyl <= 2 ? 1 : 0.4f);
  float amp = (imb * (1.2f + 2.5f * gM.load) + CAMS[gB.cam].rough * 4 * Clampf(1 - gM.rpm / 2500.f, 0, 1)) * act;
@@ -357,16 +388,154 @@ static void Scene3D(Camera3D cam) {
 static Vector3 LocalToWorld(Vector3 p) { return Vector3Transform(p, gBase); }
 
 // ===== garage UI =====
+static int gBlockSub = 0, gCustSel = 0, gCustSlot = 0;
+static void MakeCustom(Build *b) {
+ if (b->layout == 5) return;
+ float x[16], a[16]; int bk[16];
+ int n = CylGeom(b, x, a, bk);
+ Build t = *b; t.layout = 5;
+ float pitch = CylPitch(b);
+ float xmin = 1e9f; for (int i = 0; i < n; i++) xmin = fminf(xmin, x[i]);
+ for (int i = 0; i < n && i < 16; i++) {
+  t.cAng[i] = (a[i] - b->tilt * DEG2RAD) * RAD2DEG;
+  t.cSlot[i] = (b->layout >= 2) ? (i >> 1) : i;
+  t.cFlip[i] = 0;
+ }
+ (void)pitch; (void)xmin;
+ t.ncust = n; t.cyl = n;
+ *b = t;
+}
+static void BlockTab(Build *b, float x, float y, float w, int *ch) {
+ const char *subs[] = {"SHAPE", "CYLINDERS", "PLACEMENT"};
+ float sw3 = (w - 8) / 3;
+ for (int i = 0; i < 3; i++) {
+  Rectangle r = {x + i * (sw3 + 4), y, sw3, 30};
+  int hov = CheckCollisionPointRec(MP, r);
+  DrawRectangleRounded(r, 0.3f, 8, gBlockSub == i ? COL_LINE : (hov ? COL_PANEL2 : COL_PANEL));
+  TxC(subs[i], r.x + r.width * 0.5f, r.y + 8, 13, gBlockSub == i ? COL_ACC : COL_TXT, 1);
+  if (hov && MPress) { gBlockSub = i; SfxPush(SFX_SELECT); }
+ }
+ y += 40;
+ float rh = 40, gap = 6; int d; char vb[64];
+#define ROWB() (Rectangle){x, y, w, rh}
+#define NEXTB() y += rh + gap
+ if (gBlockSub == 0) {
+  float wl = WallMM(b), sp = SpacingMM(b);
+  snprintf(vb, 64, "%.0f mm", wl);
+  if (UiSlider(30, ROWB(), "Wall thickness", &wl, 4, 16, 1, vb, "Thicker walls: stronger block that takes more boost, but heavier and it sheds heat a little slower.", 1)) { b->wall = wl; *ch = 1; } NEXTB();
+  snprintf(vb, 64, "%.0f mm", sp);
+  if (UiSlider(31, ROWB(), "Bore spacing", &sp, 4, 40, 1, vb, "Metal between bores. Under ~8 mm the bores are siamesed: compact and light, but hot spots between cylinders.", 1)) { b->spacing = sp; *ch = 1; } NEXTB();
+  if ((d = UiSelect(ROWB(), "Deck", DECKS[b->deck], DECK_TIP[b->deck], 1))) { b->deck = Cyc(b->deck, d, 3); *ch = 1; } NEXTB();
+  if ((d = UiSelect(ROWB(), "Skirt", SKIRTS[b->skirt], SKIRT_TIP[b->skirt], 1))) { b->skirt = Cyc(b->skirt, d, 4); *ch = 1; } NEXTB();
+  if ((d = UiSelect(ROWB(), "Main caps", CAPS[b->caps], CAPS_TIP[b->caps], 1))) { b->caps = Cyc(b->caps, d, 3); *ch = 1; } NEXTB();
+  if ((d = UiSelect(ROWB(), "Balance shafts", b->balShaft ? "Yes" : "No", "Counter-rotating weights that cancel most of the shaking a layout can't balance itself. Costs a little power.", 1))) { b->balShaft ^= 1; *ch = 1; } NEXTB();
+  int v8 = (b->layout == 2 || b->layout == 3) && b->cyl == 8 && !b->cycle;
+  if ((d = UiSelect(ROWB(), "Crank (V8)", b->crankFlat ? "Flat-plane" : "Cross-plane", "Cross-plane: smooth, burbly. Flat-plane: revs and screams like two I4s, shakes more.", v8))) { b->crankFlat ^= 1; *ch = 1; } NEXTB();
+  y += 4;
+  Tb("BALANCE", x + 4, y, 14, COL_DIM); y += 20;
+  const char *nm[4] = {"Primary", "Secondary", "Rocking", "Overall"};
+  float val[4] = {gS.prim / fmaxf(gS.vib > 0 ? 1.f : 1.f, 1), gS.sec, gS.rock, gS.vib};
+  for (int i = 0; i < 4; i++) {
+   float v = Clampf(i == 3 ? val[i] : val[i] / (0.8f * b->cyl), 0, 1);
+   Tx(nm[i], x + 4, y, 14, COL_DIM);
+   DrawRectangleRounded((Rectangle){x + 110, y + 3, w - 180, 10}, 1, 6, (Color){14, 15, 18, 255});
+   DrawRectangleRounded((Rectangle){x + 110, y + 3, (w - 180) * v + 2, 10}, 1, 6, v < 0.25f ? COL_GRN : (v < 0.6f ? COL_YEL : COL_RED));
+   TxR(i == 3 ? (v < 0.05f ? "smooth" : (v < 0.3f ? "fine" : (v < 0.6f ? "buzzy" : "shaker"))) : TextFormat("%.2f", val[i]), x + w - 4, y, 14, COL_TXT, 1);
+   y += 20;
+  }
+ } else if (gBlockSub == 1) {
+  if (b->layout != 5) {
+   Tx("This engine uses a preset layout.", x + 4, y + 4, 16, COL_TXT); y += 28;
+   Tx("Convert it to place every cylinder yourself:", x + 4, y, 15, COL_DIM); y += 26;
+   if (UiButton((Rectangle){x, y, w, 40}, "MAKE IT A CUSTOM LAYOUT", 1, 1)) { MakeCustom(b); *ch = 1; gCustSel = 0; }
+   return;
+  }
+  float cs = 220, cx = x + cs * 0.5f + 4, cy = y + cs * 0.5f;
+  Rectangle cv = {x, y, cs + 8, cs};
+  PanelR(cv, 0.06f, (Color){14, 15, 18, 255});
+  DrawCircleLinesV((Vector2){cx, cy}, 26, COL_LINE);
+  DrawCircleV((Vector2){cx, cy}, 8, COL_DIM);
+  Tx("front view", x + 6, y + 4, 11, COL_DIM);
+  static const Color slotC[8] = {{255,138,28,255},{80,160,255,255},{90,205,115,255},{240,196,60,255},{200,110,255,255},{255,100,120,255},{80,220,220,255},{200,200,200,255}};
+  for (int i = 0; i < b->ncust; i++) {
+   float an = b->cAng[i] * DEG2RAD;
+   Vector2 dir = {sinf(an), -cosf(an)};
+   Vector2 p0 = {cx + dir.x * 34, cy + dir.y * 34}, p1 = {cx + dir.x * 100, cy + dir.y * 100};
+   Color c = slotC[b->cSlot[i] & 7];
+   DrawLineEx(p0, p1, i == gCustSel ? 22 : 18, i == gCustSel ? COL_TXT : c);
+   if (i == gCustSel) DrawLineEx(p0, p1, 14, c);
+   TxC(TextFormat("%d", i + 1), p1.x + dir.x * 10, p1.y + dir.y * 10 - 7, 13, COL_TXT, 1);
+   Vector2 ip = {p1.x - dir.y * (b->cFlip[i] ? -12 : 12) * ((b->cAng[i] > 0.5f) ? -1 : 1), p1.y + dir.x * (b->cFlip[i] ? -12 : 12) * ((b->cAng[i] > 0.5f) ? -1 : 1)};
+   DrawCircleV(ip, 3, (Color){120, 200, 255, 255});
+  }
+  if (CheckCollisionPointRec(MP, cv) && MPress) {
+   float dx = MP.x - cx, dy = MP.y - cy;
+   if (dx * dx + dy * dy > 30 * 30) {
+    float ang = atan2f(dx, -dy) * RAD2DEG;
+    int hit = -1; float best = 9;
+    for (int i = 0; i < b->ncust; i++) { float dd = fabsf(remainderf(b->cAng[i] - ang, 360)); if (dd < best) { best = dd; hit = i; } }
+    if (hit >= 0) { gCustSel = hit; SfxPush(SFX_SELECT); }
+    else if (b->ncust < 16) { int i = b->ncust++; b->cAng[i] = roundf(ang / 5) * 5; b->cSlot[i] = gCustSlot; b->cFlip[i] = 0; gCustSel = i; *ch = 1; SfxPush(SFX_RATCHET); }
+   }
+  }
+  float rx2 = x + cs + 16, rw2 = w - cs - 16;
+  Tx("Click the circle to", rx2, y + 6, 13, COL_DIM); Tx("add a cylinder at", rx2, y + 22, 13, COL_DIM); Tx("that angle, or click", rx2, y + 38, 13, COL_DIM); Tx("one to select it.", rx2, y + 54, 13, COL_DIM);
+  Tx("Color = crank throw.", rx2, y + 80, 13, COL_DIM); Tx("Blue dot = intake side.", rx2, y + 96, 13, COL_DIM);
+  Tx(TextFormat("%d cylinder%s", b->ncust, b->ncust == 1 ? "" : "s"), rx2, y + 124, 16, COL_TXT);
+  Tx(TextFormat("%.0f cc", gS.dispL * 1000), rx2, y + 146, 16, COL_TXT);
+  y += cs + 8;
+  if (gCustSel >= b->ncust) gCustSel = b->ncust - 1;
+  int has = gCustSel >= 0 && b->ncust > 0;
+  snprintf(vb, 64, "Throw %d", (has ? b->cSlot[gCustSel] : gCustSlot) + 1);
+  if ((d = UiSelect(ROWB(), "Crank throw", vb, "Which crankpin the cylinder's rod rides on. Cylinders sharing a throw must be spread apart by angle.", 1))) { if (has) { b->cSlot[gCustSel] = Cyc(b->cSlot[gCustSel], d, 8); gCustSlot = b->cSlot[gCustSel]; } else gCustSlot = Cyc(gCustSlot, d, 8); *ch = 1; } NEXTB();
+  if (has) {
+   float an = b->cAng[gCustSel];
+   snprintf(vb, 64, "%+.0f deg", an);
+   if (UiSlider(32, ROWB(), "Angle", &an, -180, 180, 5, vb, "Where this cylinder points around the crank. 0 = straight up.", 1)) { b->cAng[gCustSel] = an; *ch = 1; } NEXTB();
+   if ((d = UiSelect(ROWB(), "Ports", b->cFlip[gCustSel] ? "Flipped" : "Normal", "Swap which side the intake and exhaust ports face.", 1))) { b->cFlip[gCustSel] ^= 1; *ch = 1; } NEXTB();
+   if (UiButton((Rectangle){x, y, w * 0.5f - 3, 38}, "DELETE CYLINDER", 3, 1)) {
+    for (int i = gCustSel; i + 1 < b->ncust; i++) { b->cAng[i] = b->cAng[i + 1]; b->cSlot[i] = b->cSlot[i + 1]; b->cFlip[i] = b->cFlip[i + 1]; }
+    b->ncust--; if (gCustSel >= b->ncust) gCustSel = b->ncust - 1; *ch = 1;
+   }
+   if (UiButton((Rectangle){x + w * 0.5f + 3, y, w * 0.5f - 3, 38}, "CLEAR ALL", 0, 1)) { b->ncust = 0; gCustSel = -1; *ch = 1; }
+  }
+ } else {
+  if ((d = UiSelect(ROWB(), "Placement", b->placeMan ? "Manual" : "Auto", "Auto packs parts for you. Manual: you place them, and each must bolt to what it works with without hitting anything.", 1))) {
+   b->placeMan ^= 1; if (b->placeMan && b->altAng == 0 && b->stAng == 0) { b->altAng = 70; b->stAng = 225; } *ch = 1;
+  } NEXTB();
+  float aa = b->altAng, sa = b->stAng;
+  snprintf(vb, 64, "%+.0f deg", aa);
+  if (UiSlider(33, ROWB(), "Alternator", &aa, -180, 180, 5, vb, "Angle around the crank pulley. It bolts to the block/head on a bracket and the belt must reach.", b->placeMan && b->alternator >= 3)) { b->altAng = aa; *ch = 1; } NEXTB();
+  snprintf(vb, 64, "%+.0f deg", sa);
+  if (UiSlider(34, ROWB(), "Starter", &sa, -180, 180, 5, vb, "Angle around the flywheel. Its gear has to mesh with the ring gear.", b->placeMan && STARTERS[b->starter].elec)) { b->stAng = sa; *ch = 1; } NEXTB();
+  static const char *fpn[] = {"Front", "Left side", "Right side"};
+  if ((d = UiSelect(ROWB(), "Oil filter", fpn[b->filtPos], "Spin-on filter location. It threads onto the block's oil gallery.", !b->cycle && b->lube > 0))) { b->filtPos = Cyc(b->filtPos, d, 3); *ch = 1; } NEXTB();
+  static const char *tsn[] = {"Auto", "Left side", "Right side", "Rear"};
+  if ((d = UiSelect(ROWB(), "Turbo", tsn[b->turboSide], "The turbine bolts to the exhaust manifold, so it has to be on an exhaust side (or rear-mounted with long pipes).", b->forced >= 1 && b->forced <= 3))) { b->turboSide = Cyc(b->turboSide, d, 4); *ch = 1; } NEXTB();
+  y += 6;
+  int nbad = 0;
+  for (int i = 0; i < gNWarn; i++) if (gWarnSev[i] == 3) {
+   float s2 = 14; while (Tw(gWarn[i], s2, 0) > w - 8 && s2 > 10) s2 -= 0.5f;
+   Tx(gWarn[i], x + 4, y, s2, (Color){255, 140, 125, 255}); y += 20; nbad++;
+  }
+  if (!nbad) Tx("Everything attaches and nothing collides.", x + 4, y, 15, COL_GRN);
+ }
+#undef ROWB
+#undef NEXTB
+}
+
 static void BuildPanel(int sw, int sh) {
  float pw = 470;
  Panel((Rectangle){12, 64, pw, sh - 76}, (Color){22, 25, 30, 245});
- const char *tabs[] = {"ENGINE", "MATERIAL", "VALVES", "INTAKE", "SYSTEMS", "OIL"};
- float tw = (pw - 20) / 6;
- for (int i = 0; i < 6; i++) {
-  Rectangle tr = {22 + i * tw, 74, tw - 4, 34};
+ const char *tabs[] = {"ENGINE", "METAL", "VALVES", "INTAKE", "SYSTEM", "OIL", "BLOCK"};
+ static const int ord[7] = {0, 6, 1, 2, 3, 4, 5};
+ float tw = (pw - 20) / 7;
+ for (int k = 0; k < 7; k++) {
+  int i = ord[k];
+  Rectangle tr = {22 + k * tw, 74, tw - 3, 34};
   int hov = CheckCollisionPointRec(MP, tr);
   DrawRectangleRounded(tr, 0.3f, 8, gTab == i ? COL_ACC : (hov ? COL_PANEL2 : COL_PANEL));
-  TxC(tabs[i], tr.x + tr.width * 0.5f, tr.y + 10, 12.5f, gTab == i ? (Color){18, 18, 20, 255} : COL_TXT, 1);
+  TxC(tabs[i], tr.x + tr.width * 0.5f, tr.y + 10, 12.f, gTab == i ? (Color){18, 18, 20, 255} : COL_TXT, 1);
   if (hov && MPress && gTab != i) { gTab = i; SfxPush(SFX_SELECT); }
  }
  float x = 22, y = 122, w = pw - 20, rh = 42, gap = 6;
@@ -379,9 +548,9 @@ static void BuildPanel(int sw, int sh) {
   int d;
   if ((d = UiSelect(ROW(), "Cycle", b->cycle ? "2-stroke" : "4-stroke", b->cycle ? "2-stroke: fires every revolution. Ports instead of valves, oil mixed into the fuel." : "4-stroke: intake, compression, power, exhaust. Valves, oil sump.", 1))) { b->cycle ^= 1; ch = 1; } NEXT();
   if ((d = UiSelect(ROW(), "Fuel", FUELS[b->fuel].name, FUELS[b->fuel].tip, 1))) { b->fuel = Cyc(b->fuel, d, NFUEL); ch = 1; } NEXT();
-  if ((d = UiSelect(ROW(), "Layout", LAYOUTS[b->layout], "Cylinder arrangement. V and boxer engines have two banks; balance changes how much it shakes.", 1))) { b->layout = Cyc(b->layout, d, 5); ch = 1; } NEXT();
+  if ((d = UiSelect(ROW(), "Layout", LAYOUTS[b->layout], "Cylinder arrangement. Custom lets you place every cylinder yourself in BLOCK > CYLINDERS.", 1))) { int nl = Cyc(b->layout, d, NLAYOUT); if (nl == 5) MakeCustom(b); else b->layout = nl; ch = 1; } NEXT();
   snprintf(vb, 64, "%d", b->cyl);
-  if ((d = UiSelect(ROW(), "Cylinders", vb, "More cylinders: smoother, revs higher for the same displacement, heavier.", b->layout != 0))) {
+  if ((d = UiSelect(ROW(), "Cylinders", vb, b->layout == 5 ? "Custom layout: add and remove cylinders in BLOCK > CYLINDERS." : "More cylinders: smoother, revs higher for the same displacement, heavier.", b->layout != 0 && b->layout != 5))) {
    int idx = 0; for (int i = 0; i < CYLOPTN[b->layout]; i++) if (CYLOPT[b->layout][i] == b->cyl) idx = i;
    b->cyl = CYLOPT[b->layout][Cyc(idx, d, CYLOPTN[b->layout])]; ch = 1;
   } NEXT();
@@ -442,6 +611,8 @@ static void BuildPanel(int sw, int sh) {
    if (b->forced == 4) Tx(TextFormat("Blower safe max  %.0f psi", fd->maxb), x + 4, y, 17, COL_TXT);
    else Tx(TextFormat("Turbo max  %.0f psi    full spool ~%.0f rpm", fd->maxb, fd->full / fmaxf(gS.dispL * (b->cycle ? 2 : 1), 0.01f) * 1000), x + 4, y, 16, COL_TXT);
   } else Tx("Naturally aspirated.", x + 4, y, 17, COL_TXT);
+ } else if (gTab == 6) {
+  BlockTab(b, x, y - 4, w, &ch);
  } else if (gTab == 5) {
   int d;
   if (b->cycle == 0) {
@@ -466,6 +637,8 @@ static void BuildPanel(int sw, int sh) {
   if ((d = UiSelect(ROW(), "Exhaust", EXH[b->exhaust].name, EXH[b->exhaust].tip, 1))) { b->exhaust = Cyc(b->exhaust, d, b->cycle ? 4 : 3); ch = 1; } NEXT();
   if ((d = UiSelect(ROW(), "Starter", STARTERS[b->starter].name, PartTip(P_START, STARTERS[b->starter].tip), 1))) { b->starter = Cyc(b->starter, d, NSTART); ch = 1; } NEXT();
   if ((d = UiSelect(ROW(), "Charging", ALTS[b->alternator].name, PartTip(P_ALT, ALTS[b->alternator].tip), 1))) { b->alternator = Cyc(b->alternator, d, NALT); ch = 1; } NEXT();
+  { int ig = b->ignition; if ((d = UiSelect(ROW(), "Ignition", IGNS[ig], IGN_TIP[ig], !FUELS[b->fuel].diesel))) { b->ignition = Cyc(b->ignition, d, 5); ch = 1; } NEXT(); }
+  if ((d = UiSelect(ROW(), "Cam drive", CAMDRV[b->camDrive], CAMDRV_TIP[b->camDrive], !b->cycle && b->valvetrain > 0))) { b->camDrive = Cyc(b->camDrive, d, 3); ch = 1; } NEXT();
   if ((d = UiSelect(ROW(), "Speed control", GOVS[b->gov], "Cheap engines use a mechanical governor (holds a set rpm, hunts when cold). Performance engines use a rev limiter. None = nothing stops over-revving.", 1))) { b->gov = Cyc(b->gov, d, 4); ch = 1; } NEXT();
   y += 6;
   Tx(TextFormat("Battery: %s   Spark: %s", gS.hasBatt ? "yes" : "none", gS.magneto ? "magneto" : (gS.hasBatt ? "battery coil" : "NONE")), x + 4, y, 16, COL_TXT); y += 24;
@@ -526,7 +699,7 @@ static void SpecCard(int sw, int sh) {
   Tb(nm, x + 14, y + 12, sz, nh ? COL_ACC : COL_TXT);
   if (nh) { TxR("rename", x + w - 14, y + 16, 13, COL_DIM, 0); gTip = "Click to name your engine."; }
  }
- const char *lay = gB.layout == 0 ? "Single" : (gB.layout == 1 ? "Inline" : (gB.layout == 4 ? "Boxer" : "V"));
+ const char *lay = gB.layout == 5 ? CustomKind(&gB, 0) : gB.layout == 0 ? "Single" : (gB.layout == 1 ? "Inline" : (gB.layout == 4 ? "Boxer" : "V"));
  Tx(TextFormat("%s-%d  %s  %s  %s", lay, gB.cyl, gB.cycle ? "2-stroke" : "4-stroke", gB.cycle ? VT2[gB.valvetrain].name : VT4[gB.valvetrain].name, FUELS[gB.fuel].name), x + 14, y + 42, 14, COL_DIM);
  float yy = y + 70;
  Tb(TextFormat("%.0f", gS.estHp), x + 14, yy, 40, COL_ACC);
@@ -817,6 +990,10 @@ static void TestHUD(int sw, int sh) {
   case DMG_LUBE: why = "A 2-stroke gets ALL its lubrication from the fuel. Mix in oil: 32:1 to 50:1."; break;
   case DMG_DIRT: why = "Unfiltered air sandblasted the cylinder walls. Put a filter on it."; break;
   case DMG_TURBO: why = "The turbo spun past its limit and came apart. Lower the boost or use a bigger turbo."; break;
+  case DMG_FLY: why = TextFormat("The flywheel spun past its %.0f rpm rating and burst. Fit a stronger one or keep the governor/limiter on.", FLY[gB.flywheel].maxRpm); break;
+  case DMG_LEAN: why = "The injectors couldn't keep up: it ran lean and melted a piston. Bigger injectors or less boost."; break;
+  case DMG_VIB: why = "Unbalanced shaking fatigued the crank until it cracked. Better-balanced layout, balance shafts, lighter pistons, stronger caps, or fewer rpm."; break;
+  case DMG_BELT: why = "The timing belt jumped teeth and let the valves hit the pistons. Use a chain or gear drive for high rpm."; break;
   }
   char line[160]; float ty = my + 104; const char *p = why;
   while (*p) {
@@ -860,10 +1037,10 @@ static void Overview(int sw, int sh) {
  // column 1: numbers + cost
  yy = y + 86;
  Tb("PERFORMANCE", c1, yy, 15, COL_DIM); yy += 24;
- const char *lay = b->layout == 0 ? "Single" : (b->layout == 1 ? "Inline" : (b->layout == 4 ? "Boxer" : "V"));
+ const char *lay = b->layout == 5 ? CustomKind(b, 0) : b->layout == 0 ? "Single" : (b->layout == 1 ? "Inline" : (b->layout == 4 ? "Boxer" : "V"));
  struct { const char *k; char v[64]; } r[30]; int n = 0;
 #define ROWV(K, ...) do { r[n].k = K; snprintf(r[n].v, 64, __VA_ARGS__); n++; } while (0)
- ROWV("Layout", "%s-%d %s, %.0f deg tilt", lay, b->cyl, b->cycle ? "2-stroke" : "4-stroke", b->tilt);
+ ROWV("Layout", "%s%s%d %s, %.0f deg tilt", lay, lay[strlen(lay) - 1] == '-' ? "" : "-", NumCyl(b), b->cycle ? "2-stroke" : "4-stroke", b->tilt);
  ROWV("Displacement", "%.2f L  (%.0f cc)", s->dispL, s->dispL * 1000);
  ROWV("Bore x stroke", "%.1f x %.1f mm", b->bore, b->stroke);
  ROWV("Compression", "%.1f : 1", b->cr);
@@ -924,7 +1101,12 @@ static void Overview(int sw, int sh) {
  yy = y + 86;
  Tb("PARTS & SETTINGS", c3, yy, 15, COL_DIM); yy += 24; n = 0;
  ROWV("Fuel", "%s", f->name);
- ROWV("Block", "%s", BLOCKS[b->block].name);
+ ROWV("Block", "%s", BLOCKS[b->block].name); ROWV("Block design", "%.0f mm walls, %.0f mm between bores, %s", WallMM(b), SpacingMM(b), DECKS[b->deck]);
+ ROWV("Bottom end", "%s, %s%s%s", SKIRTS[b->skirt], CAPS[b->caps], b->balShaft ? ", balance shafts" : "", b->crankFlat ? ", flat-plane" : "");
+ ROWV("Balance", "primary %.2f, secondary %.2f, rocking %.2f", s->prim, s->sec, s->rock);
+ ROWV("Ignition", "%s", IGNS[b->ignition ? b->ignition : (s->magneto ? 3 : 2)]);
+ if (!b->cycle && b->valvetrain > 0) ROWV("Cam drive", "%s", CAMDRV[b->camDrive]);
+ if (b->placeMan) ROWV("Accessories", "alternator %+.0f deg, starter %+.0f deg (hand-placed)", b->altAng, b->stAng);
  ROWV("Pistons & rods", "%s", INTERN[b->internals].name);
  ROWV("Flywheel", "%s", FLY[b->flywheel].name);
  ROWV("Valvetrain", "%s", b->cycle ? VT2[b->valvetrain].name : TextFormat("%s, %d valves/cyl", VT4[b->valvetrain].name, b->valvetrain ? VALVES[b->valves].n : 2));
@@ -1063,6 +1245,24 @@ int main(int argc, char **argv) {
    PlayAudioStream(stream); audioOk = 1;
   }
  } else AutoAudioTest();
+ if (getenv("CUSTSHOT")) {
+  for (int k = 0; k < 4; k++) {
+   Build c = PRESETS[6]; c.layout = 5; c.lube = 2; c.oilL = 6; c.bore = 90; c.stroke = 80; c.block = 1;
+   if (k == 0) { c.ncust = 5; for (int i = 0; i < 5; i++) { c.cAng[i] = i * 72.f; if (c.cAng[i] > 180) c.cAng[i] -= 360; c.cSlot[i] = 0; c.cFlip[i] = 0; } }
+   if (k == 1) { c.ncust = 12; c.cooling = 2; for (int i = 0; i < 12; i++) { c.cAng[i] = (i % 3 - 1) * 60.f; c.cSlot[i] = i / 3; c.cFlip[i] = 0; } c.starter = 5; c.flywheel = 2; }
+   if (k == 2) { c.ncust = 4; c.cooling = 1; for (int i = 0; i < 4; i++) { c.cAng[i] = 180; c.cSlot[i] = i; c.cFlip[i] = 0; } }
+   if (k == 3) { c = PRESETS[2]; c.placeMan = 1; c.altAng = 70; c.stAng = 225; c.filtPos = 1; c.turboSide = 2; }
+   c.cyl = c.layout == 5 ? c.ncust : c.cyl; c.name[0] = 0;
+   gB = c; OnBuildChanged();
+   char nm[64]; BuildName(&gB, nm, 64);
+   printf("CUST %d %s: vib %.2f left %d attach '%s'\n", k, nm, gS.vib, G.solveLeft, G.attachErr);
+   for (int i = 0; i < gNWarn; i++) printf("   W%d %s\n", gWarnSev[i], gWarn[i]);
+   for (int ga = 0; ga < G_N; ga++) for (int gb = 0; gb < G_N; gb++) if (gConf[ga][gb]) printf("   CONFLICT %s in %s: %d\n", GROUP_NAME[ga], GROUP_NAME[gb], gConf[ga][gb]);
+   Camera3D c2 = {0}; c2.up = (Vector3){0, 1, 0}; c2.fovy = 38; c2.projection = CAMERA_PERSPECTIVE;
+   for (int v = 0; v < 2; v++) { camYaw = v ? 3.9f : 0.75f; camPitch = 0.3f; ResetCamDist(); camDist = camDistT = camDist * 0.8f; UpdateCamera3D(&c2, 0); BeginDrawing(); ClearBackground(COL_BG); Scene3D(c2); EndDrawing(); Shot(TextFormat("cu_%d_%d", k, v)); }
+  }
+  CloseWindow(); return 0;
+ }
  if (getenv("FUZZ")) {
   int tot[G_N][G_N] = {{0}}, bad = 0, nb = atoi(getenv("FUZZ"));
   unsigned r = 12345;
@@ -1074,14 +1274,19 @@ int main(int argc, char **argv) {
    b.valvetrain = b.cycle ? RN(3) : RN(4); b.valves = RN(4); b.cam = RN(4); b.delivery = RN(NDEL); b.filter = RN(NFIL);
    b.forced = RN(NFORCED); b.boost = 5 + RN(20); b.intercooler = RN(2); b.cooling = RN(3); b.exhaust = RN(b.cycle ? 4 : 3);
    b.starter = RN(NSTART); b.alternator = RN(NALT); b.flywheel = RN(NFLY); b.carb = RN(NCARB); b.inj = RN(NINJ); b.gov = RN(4); b.name[0] = 0;
+   if (RN(4) == 0) { b.layout = 5; b.lube = 2; b.ncust = 1 + RN(10); for (int i = 0; i < b.ncust; i++) { b.cAng[i] = (float)(RN(73) * 5 - 180); b.cSlot[i] = RN(5); b.cFlip[i] = RN(4) == 0; } b.cyl = b.ncust; }
+   b.placeMan = RN(5) == 0; b.altAng = (float)(RN(73) * 5 - 180); b.stAng = (float)(RN(73) * 5 - 180); b.filtPos = RN(3); b.turboSide = RN(4);
+   b.skirt = RN(4); b.deck = RN(3); b.caps = RN(3); b.wall = 4 + RN(13); b.ignition = RN(5); b.camDrive = RN(3);
+   { const char *fp = getenv("FUZZPLAIN"); if (fp) { int f = atoi(fp);
+     if (f & 1) { if (b.layout == 5) { b.layout = 1; b.cyl = 4; } } if (f & 2) { b.skirt = 0; b.wall = 0; } if (f & 4) { b.filtPos = 0; b.turboSide = 0; } if (f & 8) b.placeMan = 0; } }
    gB = b; OnBuildChanged();
    if (G.solveLeft && bad < 4 && getenv("FUZZSHOT")) {
     Camera3D c2 = {0}; c2.up = (Vector3){0, 1, 0}; c2.fovy = 38; c2.projection = CAMERA_PERSPECTIVE;
     for (int v = 0; v < 2; v++) { camYaw = v ? 3.9f : 0.75f; camPitch = 0.3f; ResetCamDist(); camDist = camDistT = camDist * 0.7f; UpdateCamera3D(&c2, 0); BeginDrawing(); ClearBackground(COL_BG); Scene3D(c2); EndDrawing(); Shot(TextFormat("fz_%d_%d", k, v)); }
    }
-   if (G.solveLeft) { bad++; for (int a = 0; a < G_N; a++) for (int c = 0; c < G_N; c++) tot[a][c] += gConf[a][c] ? 1 : 0;
+   if (G.solveLeft && !b.placeMan) { bad++; for (int a = 0; a < G_N; a++) for (int c = 0; c < G_N; c++) tot[a][c] += gConf[a][c] ? 1 : 0;
     if (bad <= 12) { for (int a = 0; a < G_N; a++) for (int c = 0; c < G_N; c++) if (gConf[a][c]) printf("    [%s in %s %d]", GROUP_NAME[a], GROUP_NAME[c], gConf[a][c]); printf("\n"); }
-    if (bad <= 12) printf("BAD %d: layout %d cyl %d bore %.0f stroke %.0f tilt %.0f forced %d cool %d start %d alt %d ex %d 2T %d left %d\n", k, b.layout, b.cyl, b.bore, b.stroke, b.tilt, b.forced, b.cooling, b.starter, b.alternator, b.exhaust, b.cycle, G.solveLeft); }
+    if (bad <= 12) printf("BAD %d man%d skirt%d: layout %d cyl %d bore %.0f stroke %.0f tilt %.0f forced %d cool %d start %d alt %d ex %d 2T %d left %d\n", k, b.placeMan, b.skirt, b.layout, b.cyl, b.bore, b.stroke, b.tilt, b.forced, b.cooling, b.starter, b.alternator, b.exhaust, b.cycle, G.solveLeft); }
   }
   printf("FUZZ %d builds, %d with leftover overlaps\n", nb, bad);
   for (int a = 0; a < G_N; a++) for (int c = 0; c < G_N; c++) if (tot[a][c]) printf("  %s in %s: %d builds\n", GROUP_NAME[a], GROUP_NAME[c], tot[a][c]);
@@ -1173,9 +1378,24 @@ int main(int argc, char **argv) {
     if (k3 == 5) { gShowOverview = 0; gDS.oilView = 0; gTab = 5; gB = PRESETS[5]; OnBuildChanged(); camYaw = 2.3f; }
     if (k3 == 8) Shot("garage_oil_tilt");
     if (k3 == 9) { gDS.oilView = 0; gB = PRESETS[8]; OnBuildChanged(); gTab = 4; }
-    if (k3 == 12) { Shot("garage_buggy"); gShowSettings = 1; }
-    if (k3 == 14) { Shot("settings"); gShowSettings = 0; }
-    if (k3 > 16) break;
+    if (k3 == 12) { Shot("garage_buggy"); }
+    if (k3 == 13 || k3 == 17 || k3 == 21) {
+     Build c = PRESETS[6]; c.layout = 5; c.lube = 2; c.oilL = 6; c.bore = 90; c.stroke = 80;
+     if (k3 == 13) { c.ncust = 5; for (int i = 0; i < 5; i++) { c.cAng[i] = i * 72.f; if (c.cAng[i] > 180) c.cAng[i] -= 360; c.cSlot[i] = 0; c.cFlip[i] = 0; } }
+     if (k3 == 17) { c.ncust = 12; c.cooling = 2; c.block = 1; for (int i = 0; i < 12; i++) { c.cAng[i] = (i % 3 - 1) * 60.f; c.cSlot[i] = i / 3; c.cFlip[i] = 0; } c.starter = 5; c.flywheel = 2; }
+     if (k3 == 21) { c.ncust = 4; c.cooling = 1; for (int i = 0; i < 4; i++) { c.cAng[i] = 180; c.cSlot[i] = i; c.cFlip[i] = 0; } }
+     c.cyl = c.ncust; c.name[0] = 0;
+     gB = c; OnBuildChanged(); ResetCamDist(); gTab = 6; gBlockSub = 1; camYaw = 0.75f;
+     printf("CUSTOM %d: n=%d vib %.2f solveLeft %d attach '%s' warn %d\n", k3, c.ncust, gS.vib, G.solveLeft, G.attachErr, gNWarn);
+     for (int i = 0; i < gNWarn; i++) printf("   W%d %s\n", gWarnSev[i], gWarn[i]);
+    }
+    if (k3 == 16) Shot("custom_radial");
+    if (k3 == 20) Shot("custom_w12");
+    if (k3 == 24) { Shot("custom_inverted"); gBlockSub = 0; }
+    if (k3 == 26) Shot("block_shape");
+    if (k3 == 27) { gBlockSub = 2; gB.placeMan = 1; gB.altAng = 70; gB.stAng = 225; OnBuildChanged(); }
+    if (k3 == 30) Shot("block_place");
+    if (k3 > 31) break;
    }
   }
   if (gMode == 0) {

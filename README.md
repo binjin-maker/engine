@@ -5,7 +5,14 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
 **Download:** [`bin/EngineGarage.ex_`](bin/EngineGarage.ex_). Rename it to `EngineGarage.exe` after downloading. It's a single file with no installer, for Windows 10/11.
 
 ## Building an engine
-- **Core:** 4- or 2-stroke, 7 fuels, single / inline / V60 / V90 / boxer, 1-16 cylinders, bore, stroke, compression, cylinder tilt (-90 to +90 deg)
+- **Core:** 4- or 2-stroke, 7 fuels, single / inline / V60 / V90 / boxer / **custom**, 1-16 cylinders, bore, stroke, compression, cylinder tilt (-90 to +90 deg)
+- **BLOCK tab (custom block designer):**
+  - *Shape:* wall thickness, bore spacing (siamesed bores run hot), open/semi/closed deck, skirt depth or bedplate, 2-bolt / 4-bolt / billet main caps, balance shafts, flat- or cross-plane V8 crank. Live primary / secondary / rocking balance readout.
+  - *Cylinders:* place every cylinder yourself on a front-view dial: pick its angle, which crank throw it rides on, and which way its ports face. Build radials, W12s, X engines, inverted inlines and anything else. The crank throw angles are auto-optimized for smoothness and even firing. Cylinders sharing a throw must be spread apart, and downward-pointing cylinders need a dry sump.
+  - *Placement:* hand-place the alternator and starter (angle around the crank / flywheel), the oil filter (front or either side) and the turbo (left, right or rear). Every part must bolt to what it works with, and nothing may collide, or the engine can't be built.
+- **Ignition:** points, distributor, CDI or coil-on-plug, each with its own rpm and boost limits. Coil ignitions need a battery.
+- **Cam drive:** chain, gear or belt. Belts jump teeth above ~9000 rpm.
+- **Shake:** an imbalanced layout shakes the engine on the dyno and can crack the crank at high rpm.
 - **Materials:** cast iron, cast aluminum, CGI, magnesium, billet. Weak materials lose strength as castings get bigger, and some are unviable past a size. Each has its own heat and compression tolerance.
 - **Rated parts catalog.** Every part has ratings and fitment:
   - Flywheels: small-engine magneto vs ring-gear, each with an rpm burst rating

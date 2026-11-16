@@ -77,11 +77,11 @@ static void RenderInit(void) {
 static void AllowPair(int a, int b) { gAllow[a] |= 1u << b; gAllow[b] |= 1u << a; }
 static void AllowInit(void) {
  for (int i = 0; i < G_N; i++) gAllow[i] = 1u << i;
- AllowPair(G_BLOCK, G_HEAD); AllowPair(G_BLOCK, G_ROT); AllowPair(G_BLOCK, G_STAND); AllowPair(G_BLOCK, G_INTAKE);
+ AllowPair(G_BLOCK, G_HEAD); AllowPair(G_BLOCK, G_ROT); AllowPair(G_BLOCK, G_STAND); AllowPair(G_HEAD, G_STAND); AllowPair(G_BLOCK, G_INTAKE);
  AllowPair(G_BLOCK, G_COOL); AllowPair(G_HEAD, G_PLUG); AllowPair(G_HEAD, G_INTAKE); AllowPair(G_HEAD, G_EXH); AllowPair(G_HEAD, G_COOL);
  AllowPair(G_ROT, G_FRONT); AllowPair(G_ROT, G_FLY); AllowPair(G_FRONT, G_ALT); AllowPair(G_FRONT, G_SC); AllowPair(G_FRONT, G_BLOCK);
  AllowPair(G_INTAKE, G_FILTER); AllowPair(G_INTAKE, G_SC); AllowPair(G_INTAKE, G_CHARGE); AllowPair(G_FILTER, G_TURBO); AllowPair(G_FILTER, G_SC);
- AllowPair(G_OILSYS, G_BLOCK); AllowPair(G_OILSYS, G_FRONT); AllowPair(G_TURBO, G_EXH); AllowPair(G_TURBO, G_CHARGE); AllowPair(G_STARTER, G_FLY); AllowPair(G_STARTER, G_BLOCK); AllowPair(G_ALT, G_BLOCK);
+ AllowPair(G_OILSYS, G_BLOCK); AllowPair(G_OILSYS, G_FRONT); AllowPair(G_TURBO, G_EXH); AllowPair(G_TURBO, G_CHARGE); AllowPair(G_STARTER, G_FLY); AllowPair(G_STARTER, G_BLOCK); AllowPair(G_ALT, G_BLOCK); AllowPair(G_ALT, G_HEAD);
 }
 
 static int MeshId(Mesh m) { return m.vaoId == mCube.vaoId ? 0 : m.vaoId == mCyl.vaoId ? 1 : (m.vaoId == mSph.vaoId || m.vaoId == mPuff.vaoId) ? 2 : 3; }
@@ -251,6 +251,7 @@ typedef struct {
  Vector3 inP[16], exP[16], inD[16], exD[16];
  Vector3 exhOut[2], intakeTop, fanC; float fanR, pulR, pulX;
  int nOut, hoseSel[2]; float laneSide[2];
+ int custom, inSide, itb; Vector3 tankP; float bedH, lowY, stTop, is[16]; char attachErr[96];
  int hasTurbo, oilFlip; Vector3 turboPos; float turboK;
  // solver offsets for movable groups
  Vector3 offOil, offAlt, offStarter, offTurbo, offFilter, offRad, offLane[2], offSC, offCharge;
@@ -269,37 +270,54 @@ typedef struct { int cut; float fanAng; float vis; float glow; float pullT; floa
 
 static void GeoBase(const Build *b) {
  Geo *g = &G;
- Vector3 keep[8] = {g->offAlt, g->offStarter, g->offTurbo, g->offFilter, g->offRad, g->offLane[0], g->offLane[1], g->offSC};
- (void)keep;
  memset(g, 0, sizeof *g);
- int n = b->cyl;
- g->n = n; g->nb = b->layout >= 2 ? 2 : 1; g->m = g->nb == 2 ? (n + 1) / 2 : n;
- float half = LAYOUT_HALF[b->layout] * DEG2RAD;
- float tlt = b->tilt * DEG2RAD;
+ int custom = b->layout == 5;
+ float fire[16];
+ FireAngles(b, fire);
+ int n = CylGeom(b, g->x, g->a, g->bank);
+ g->n = n; g->custom = custom;
+ float tlt = b->tilt * DEG2RAD, half = LAYOUT_HALF[b->layout] * DEG2RAD;
+ float wallX = (WallMM(b) - 8.f);
  g->r = b->stroke / 2; g->l = 1.75f * b->stroke;
- g->pitch = b->bore * 1.18f + 10;
+ g->pitch = CylPitch(b);
  g->deck = g->r + g->l + 0.25f * b->bore + 1;
  g->v0 = g->r * 1.25f + 10;
  g->headH = (b->cycle ? 0.42f : VT4[b->valvetrain].hgt) * b->bore;
  g->headW = b->bore * 1.35f;
- g->jw = b->bore * 1.28f;
- g->L = g->m * g->pitch + 0.45f * g->pitch + (g->nb == 2 ? 0.25f * g->pitch : 0);
- for (int i = 0; i < n; i++) {
-  if (g->nb == 2) {
-   int bk = i & 1, j = i >> 1;
-   g->bank[i] = bk; g->a[i] = (bk ? -half : half) + tlt;
-   g->x[i] = (j - (g->m - 1) * 0.5f) * g->pitch + (bk ? 0.12f : -0.12f) * g->pitch;
-  } else { g->bank[i] = 0; g->a[i] = tlt; g->x[i] = (i - (n - 1) * 0.5f) * g->pitch; }
-  g->tdc[i] = AU.fire[i];
+ g->jw = b->bore * 1.28f + wallX * 1.5f;
+ for (int i = 0; i < n; i++) g->tdc[i] = fire[i];
+ if (custom) {
+  int s0 = 0, s1 = 0; float a0 = 0, a1 = 0;
+  for (int i = 0; i < n; i++) { if (g->bank[i]) { s1++; a1 += g->a[i]; } else { s0++; a0 += g->a[i]; } }
+  if (!s0) for (int i = 0; i < n; i++) g->bank[i] = 0;
+  g->nb = (s0 && s1) ? 2 : 1;
+  g->bankA[0] = s0 ? a0 / s0 : a1 / fmaxf(s1, 1); g->bankA[1] = s1 ? a1 / s1 : 0;
+  float xmin = 1e9f, xmax = -1e9f;
+  for (int i = 0; i < n; i++) { xmin = fminf(xmin, g->x[i]); xmax = fmaxf(xmax, g->x[i]); }
+  g->L = (xmax - xmin) + g->pitch * 1.45f;
+  g->m = n;
+ } else {
+  g->nb = b->layout >= 2 ? 2 : 1; g->m = g->nb == 2 ? (n + 1) / 2 : n;
+  g->L = g->m * g->pitch + 0.45f * g->pitch + (g->nb == 2 ? 0.25f * g->pitch : 0);
+  g->bankA[0] = (g->nb == 2 ? half : 0) + tlt; g->bankA[1] = -half + tlt;
  }
- g->bankA[0] = (g->nb == 2 ? half : 0) + tlt; g->bankA[1] = -half + tlt;
- for (int bk = 0; bk < g->nb; bk++) { g->bx0[bk] = 1e9f; g->bx1[bk] = -1e9f; }
+ for (int bk = 0; bk < 2; bk++) { g->bx0[bk] = 1e9f; g->bx1[bk] = -1e9f; }
  for (int i = 0; i < n; i++) { int bk = g->bank[i]; g->bx0[bk] = fminf(g->bx0[bk], g->x[i] - g->pitch * 0.5f); g->bx1[bk] = fmaxf(g->bx1[bk], g->x[i] + g->pitch * 0.5f); }
  float ccWi = 2 * g->r + b->bore * 0.9f + 20;
- if (b->layout <= 1) { g->ccW = fmaxf(ccWi, g->jw + 14) + 2 * fabsf(sinf(tlt)) * g->v0 * 0.8f; g->ccTop = g->v0 * fmaxf(cosf(tlt), 0.35f) + 10 + fabsf(sinf(tlt)) * b->bore * 0.3f; }
- else if (b->layout <= 3) { g->ccW = fmaxf(2 * sinf(half) * g->v0 + b->bore * 1.25f, ccWi); g->ccTop = g->v0 * cosf(half) + b->bore * 0.35f; }
- else { g->ccW = 2 * g->v0 + 24; g->ccTop = g->r * 1.3f + b->bore * 0.45f; }
- g->ccBot = -(g->r * 1.35f + 12);
+ if (custom) {
+  float sw = 0, top = g->r * 1.3f + b->bore * 0.3f, bot = -(g->r * 1.35f + 12);
+  for (int i = 0; i < n; i++) { sw = fmaxf(sw, fabsf(sinf(g->a[i]))); top = fmaxf(top, g->v0 * cosf(g->a[i]) + b->bore * 0.35f); bot = fminf(bot, g->v0 * cosf(g->a[i]) - b->bore * 0.35f); }
+  g->ccW = fmaxf(2 * sw * g->v0 + b->bore * 1.25f, ccWi); g->ccTop = top; g->ccBot = bot;
+ } else {
+  if (b->layout <= 1) { g->ccW = fmaxf(ccWi, g->jw + 14) + 2 * fabsf(sinf(tlt)) * g->v0 * 0.8f; g->ccTop = g->v0 * fmaxf(cosf(tlt), 0.35f) + 10 + fabsf(sinf(tlt)) * b->bore * 0.3f; }
+  else if (b->layout <= 3) { g->ccW = fmaxf(2 * sinf(half) * g->v0 + b->bore * 1.25f, ccWi); g->ccTop = g->v0 * cosf(half) + b->bore * 0.35f; }
+  else { g->ccW = 2 * g->v0 + 24; g->ccTop = g->r * 1.3f + b->bore * 0.45f; }
+  g->ccBot = -(g->r * 1.35f + 12);
+ }
+ g->ccW += wallX * 2;
+ if (b->skirt == 1) g->ccBot += g->r * 0.2f;
+ if (b->skirt == 2) g->ccBot -= g->r * 0.25f + 6;
+ g->bedH = b->skirt == 3 ? g->r * 0.35f + 10 : 0;
  g->panH = b->cycle ? 0 : (30 + b->bore * 0.5f) * (b->lube == 2 ? 0.45f : 1.f);
  float fw = FLY[b->flywheel].magneto ? 0.85f : (FLY[b->flywheel].mul > 1.5f ? 1.15f : 1.f);
  g->flyR = (b->stroke * 0.9f + 70) * fw;
@@ -307,11 +325,26 @@ static void GeoBase(const Build *b) {
  for (int i = 0; i < n; i++) {
   float a = g->a[i];
   float is = (a > 0.01f) ? -1.f : 1.f;
+  if (custom && b->cFlip[i]) is = -is;
   float vp = g->deck + g->headH * 0.48f, ve = g->deck + g->headH * (b->cycle ? 0.4f : 0.3f);
   g->inP[i] = BP(a, g->x[i], vp, is * g->headW * 0.5f);
   g->inD[i] = BD(a, 0, is);
   g->exP[i] = BP(a, g->x[i], ve, -is * g->headW * 0.5f);
   g->exD[i] = BD(a, 0, -is);
+  g->is[i] = is;
+ }
+ g->lowY = 1e9f; g->stTop = -1e9f;
+ if (custom) for (int i = 0; i < n; i++) for (int sd = -1; sd <= 1; sd += 2) g->lowY = fminf(g->lowY, BP(g->a[i], 0, g->deck + g->headH + 14, sd * g->headW * 0.5f).y);
+ if (custom && b->lube == 2 && g->lowY < g->ccBot - g->panH) g->panH = 0;
+ if (custom) {
+  // bank = which side the exhaust exits, so collectors stay on one side each
+  int s0 = 0, s1 = 0; float a0 = 0, a1 = 0;
+  for (int i = 0; i < n; i++) { g->bank[i] = g->exD[i].z >= 0 ? 0 : 1; if (g->bank[i]) { s1++; a1 += g->a[i]; } else { s0++; a0 += g->a[i]; } }
+  if (!s0) for (int i = 0; i < n; i++) g->bank[i] = 0;
+  g->nb = (s0 && s1) ? 2 : 1;
+  g->bankA[0] = s0 ? a0 / s0 : a1 / fmaxf(s1, 1); g->bankA[1] = s1 ? a1 / s1 : 0;
+  for (int bk = 0; bk < 2; bk++) { g->bx0[bk] = 1e9f; g->bx1[bk] = -1e9f; }
+  for (int i = 0; i < n; i++) { int bk = g->bank[i]; g->bx0[bk] = fminf(g->bx0[bk], g->x[i] - g->pitch * 0.5f); g->bx1[bk] = fmaxf(g->bx1[bk], g->x[i] + g->pitch * 0.5f); }
  }
 }
 
@@ -606,8 +639,9 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   float rr2 = fminf(g->ccTop - g->ccBot, g->ccW) * 0.5f;
   Cyl((Vector3){frontX - 6, (g->ccTop + g->ccBot) * 0.5f, 0}, (Vector3){rearX + 6, (g->ccTop + g->ccBot) * 0.5f, 0}, rr2 * 0.92f, Shade(blk, 1.1f), 0.5f);
  }
- if (g->panH > 0) Box((Vector3){0, g->ccBot - g->panH * 0.5f + 2, 0}, (Vector3){g->L * 0.82f, g->panH + 4, g->ccW * 0.8f}, MatrixIdentity(), b->block == 0 ? C_DARK : Shade(blk, 0.95f), 0.4f);
- for (int bk = 0; bk < g->nb; bk++) {
+ if (g->bedH > 0 && !ds->cut) Box((Vector3){0, g->ccBot - g->bedH * 0.5f + 2, 0}, (Vector3){g->L - 6, g->bedH + 4, g->ccW - 6}, MatrixIdentity(), Shade(blk, 0.82f), 0.45f);
+ if (g->panH > 0) Box((Vector3){0, g->ccBot - g->bedH - g->panH * 0.5f + 2, 0}, (Vector3){g->L * 0.82f, g->panH + 4, g->ccW * 0.8f}, MatrixIdentity(), b->block == 0 ? C_DARK : Shade(blk, 0.95f), 0.4f);
+ for (int bk = 0; bk < g->nb && !g->custom; bk++) {
   float a = g->bankA[bk];
   Matrix R = MatrixRotateX(a);
   float x0 = g->bx0[bk], x1 = g->bx1[bk], xm = (x0 + x1) * 0.5f, len = x1 - x0;
@@ -629,6 +663,14 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
  for (int i = 0; i < g->n; i++) {
   float a = g->a[i], x = g->x[i];
   Matrix R = MatrixRotateX(a);
+  if (b->cooling > 0 && g->custom) {
+   float pw = fminf(g->pitch * 0.92f, b->bore * 1.3f);
+   gGroup = G_BLOCK;
+   if (!ds->cut) Box(BP(a, x, (g->v0 + g->deck) * 0.5f, 0), (Vector3){pw, g->deck - g->v0, g->jw}, R, blk, 0.35f);
+   gGroup = G_HEAD;
+   Box(BP(a, x, g->deck + g->headH * 0.5f - 1, 0), (Vector3){pw + 8, g->headH + 2, g->headW}, R, headC, 0.45f);
+   if (!b->cycle && b->valvetrain > 0) { float ch = b->bore * 0.24f, is0 = g->is[i]; Box(BP(a, x, g->deck + g->headH + ch * 0.5f - 2, b->valvetrain == 3 ? 0 : is0 * b->bore * 0.2f), (Vector3){pw - 10, ch, b->valvetrain == 3 ? b->bore * 0.8f : b->bore * 0.6f}, R, cover, 0.35f); }
+  }
   if (b->cooling == 0) {
    gGroup = G_BLOCK;
    if (!ds->cut) {
@@ -640,13 +682,13 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
    gGroup = G_HEAD;
    Box(BP(a, x, g->deck + g->headH * 0.5f - 1, 0), (Vector3){g->pitch * 0.86f, g->headH + 2, g->headW * 0.95f}, R, headC, 0.45f);
    for (float v = g->deck + 5; v < g->deck + g->headH - 2; v += 7) Box(BP(a, x, v, 0), (Vector3){g->pitch * 0.94f, 2.2f, g->headW * 1.28f}, R, Shade(blk, 1.0f), 0.35f);
-   if (!b->cycle && b->valvetrain > 0) { float ch = b->bore * 0.2f, is0 = (a > 0.01f) ? -1.f : 1.f; Box(BP(a, x, g->deck + g->headH + ch * 0.5f - 2, b->valvetrain == 3 ? 0 : is0 * b->bore * 0.2f), (Vector3){g->pitch * 0.7f, ch, b->valvetrain == 3 ? b->bore * 0.8f : b->bore * 0.6f}, R, cover, 0.35f); }
+   if (!b->cycle && b->valvetrain > 0) { float ch = b->bore * 0.2f, is0 = g->is[i]; Box(BP(a, x, g->deck + g->headH + ch * 0.5f - 2, b->valvetrain == 3 ? 0 : is0 * b->bore * 0.2f), (Vector3){g->pitch * 0.7f, ch, b->valvetrain == 3 ? b->bore * 0.8f : b->bore * 0.6f}, R, cover, 0.35f); }
   }
   if (!FUELS[b->fuel].diesel) {
    gGroup = G_PLUG;
    Vector3 p0, p1;
    {
-    float top = g->deck + g->headH, is = (a > 0.01f) ? -1.f : 1.f;
+    float top = g->deck + g->headH, is = g->is[i];
     float w = (b->cycle || b->valvetrain == 3 || b->valvetrain == 0) ? 0 : -is * b->bore * 0.36f;
     p0 = BP(a, x, top - 8, w); p1 = BP(a, x, top + 28, w);
    }
@@ -656,6 +698,51 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
  }
  float topY = -1e9f;
  for (int bk = 0; bk < g->nb; bk++) for (int sd = -1; sd <= 1; sd += 2) topY = fmaxf(topY, BP(g->bankA[bk], 0, g->deck + g->headH + b->bore * 0.3f + 30, sd * g->headW * 0.5f).y);
+ if (ds->cut) {
+  gGroup = G_BLOCK;
+  float xs[18]; int nxs = 0;
+  for (int i = 0; i < g->n; i++) { int dup = 0; for (int k = 0; k < nxs; k++) if (fabsf(xs[k] - g->x[i]) < g->pitch * 0.4f) dup = 1; if (!dup && nxs < 16) xs[nxs++] = g->x[i]; }
+  for (int i = 0; i < nxs; i++) for (int j = i + 1; j < nxs; j++) if (xs[j] < xs[i]) { float t = xs[i]; xs[i] = xs[j]; xs[j] = t; }
+  float caps[20]; int nc = 0;
+  caps[nc++] = -g->L * 0.5f + 12;
+  for (int k = 0; k + 1 < nxs; k++) caps[nc++] = (xs[k] + xs[k + 1]) * 0.5f;
+  caps[nc++] = g->L * 0.5f - 12;
+  float jr = fmaxf(rr * 0.45f, 9), cw = 14 + b->caps * 3, cd = g->r * 1.9f + 30;
+  int nbolt = b->caps == 0 ? 2 : 4;
+  for (int k = 0; k < nc; k++) {
+   Box((Vector3){caps[k], -jr - 13, 0}, (Vector3){cw, 26, cd}, MatrixIdentity(), Shade(blk, 0.75f), 0.5f);
+   for (int q = 0; q < nbolt; q++) { float zz = (q - (nbolt - 1) * 0.5f) * (cd - 24) / fmaxf(nbolt - 1, 1); Cyl((Vector3){caps[k], -jr - 34, zz}, (Vector3){caps[k], -jr - 24, zz}, 4.5f, C_CHROME, 0.9f); }
+   if (b->caps == 2) for (int sd = -1; sd <= 1; sd += 2) Cyl((Vector3){caps[k], -jr - 13, sd * (cd * 0.5f - 4)}, (Vector3){caps[k], -jr - 13, sd * (cd * 0.5f + 8)}, 4.5f, C_CHROME, 0.9f);
+  }
+ }
+ // timing cover + ignition hardware
+ if (!b->cycle && b->valvetrain > 0) {
+  gGroup = G_FRONT;
+  Color tcC = b->camDrive == 2 ? (Color){28, 28, 30, 255} : Shade(blk, 1.05f);
+  float tw = b->camDrive == 1 ? b->bore * 0.95f : b->bore * 0.8f;
+  for (int bk = 0; bk < g->nb && !g->custom; bk++) {
+   float a = g->bankA[bk], top = g->deck + g->headH;
+   float x0 = fminf(g->bx0[bk] - g->pitch * 0.06f - 6, frontX + 2);
+   Box(BP(a, x0 - 4, top * 0.5f, 0), (Vector3){10, top, tw}, MatrixRotateX(a), tcC, 0.4f);
+  }
+ }
+ if (!FUELS[b->fuel].diesel) {
+  int ig = b->ignition ? b->ignition : (FLY[b->flywheel].magneto ? 3 : 2);
+  if (ig == 2 && !b->cycle) {
+   gGroup = G_HEAD;
+   float a = g->bankA[0];
+   Vector3 d0 = BP(a, g->bx1[0] - 10, g->deck + g->headH + 4, g->is[0] * g->headW * 0.3f);
+   Vector3 d1 = Vector3Add(d0, (Vector3){0, 46, 0});
+   Cyl(d0, d1, 15, C_DARK, 0.3f); Cyl(d1, Vector3Add(d1, (Vector3){0, 18, 0}), 26, (Color){30, 30, 32, 255}, 0.2f);
+  }
+  if (ig == 4) {
+   gGroup = G_PLUG;
+   for (int i = 0; i < g->n; i++) {
+    float a = g->a[i], w = (b->cycle || b->valvetrain == 3 || b->valvetrain == 0) ? 0 : -g->is[i] * b->bore * 0.36f;
+    Box(BP(a, g->x[i], g->deck + g->headH + 44, w), (Vector3){24, 34, 24}, MatrixRotateX(a), (Color){30, 30, 34, 255}, 0.3f);
+   }
+  }
+ }
  // ---- front: pulley, belts, alternator, recoil
  gGroup = G_FRONT;
  float px0 = frontX - 30, px1 = frontX - 10;
@@ -678,8 +765,25 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
  if (beltAlt) {
   gGroup = G_ALT;
   float side = g->inD[0].z >= 0 ? 1.f : -1.f;
-  Vector3 base = g->nb == 2 || b->layout == 4 ? (Vector3){0, g->ccTop + 70, 0} : (Vector3){0, g->ccTop * 0.35f + rr * 0.3f, side * (g->ccW * 0.5f + 64)};
+  Vector3 base = g->nb == 2 || b->layout == 4 || g->custom ? (Vector3){0, g->ccTop + 70, 0} : (Vector3){0, g->ccTop * 0.35f + rr * 0.3f, side * (g->ccW * 0.5f + 64)};
   Vector3 altC = Vector3Add(base, g->offAlt);
+  if (b->placeMan) {
+   float an = b->altAng * DEG2RAD, dy = cosf(an), dz = sinf(an), R0 = pulR + 70, Rf = R0;
+   for (float R2 = R0; R2 < 900; R2 += 5) {
+    float y = dy * R2, z = dz * R2; int hit = 0;
+    if (fabsf(z) < g->ccW * 0.5f + 59 && y < g->ccTop + 59 && y > g->ccBot - g->bedH - g->panH - 59) hit = 1;
+    for (int bk = 0; bk < g->nb && !hit; bk++) {
+     float ba = g->bankA[bk], v = y * cosf(ba) + z * sinf(ba), w = -y * sinf(ba) + z * cosf(ba);
+     if (v > g->v0 - 59 && v < g->deck + g->headH + 90 && fabsf(w) < g->headW * 0.5f + 59) hit = 1;
+    }
+    if (!hit) { Rf = R2; break; }
+    Rf = R2;
+   }
+   altC = (Vector3){0, dy * Rf, dz * Rf};
+   if (Rf > 420) snprintf(g->attachErr, 96, "Alternator at %.0f deg is %.0f mm out: no belt reaches that far.", b->altAng, Rf);
+   Vector3 br0 = {frontX + 30, altC.y - dy * 50, altC.z - dz * 50}, br1 = {frontX + 30, altC.y - dy * 72, altC.z - dz * 72};
+   Cyl(br0, br1, 9, C_STEEL, 0.6f);
+  }
   float altPR = 26;
   Cyl((Vector3){frontX - 8 + g->offAlt.x, altC.y, altC.z}, (Vector3){frontX + 75 + g->offAlt.x, altC.y, altC.z}, 55, (Color){165, 168, 172, 255}, 0.7f);
   if (g->offAlt.x < -20) Cyl((Vector3){px0, altC.y, altC.z}, (Vector3){frontX - 6 + g->offAlt.x, altC.y, altC.z}, 8, C_STEEL, 0.8f);
@@ -702,14 +806,16 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   gGroup = G_STARTER;
   float sr = 20 + 12 * sqrtf(st->power);
   Vector3 sc = Vector3Add((Vector3){rearX - 40, -g->flyR * 0.55f, -(g->flyR * 0.72f + 10)}, g->offStarter);
+  if (b->placeMan) { float an = b->stAng * DEG2RAD, Rr = g->flyR + sr - 4; sc = (Vector3){rearX - 40, cosf(an) * Rr, sinf(an) * Rr}; }
   Cyl((Vector3){sc.x - 50, sc.y, sc.z}, (Vector3){sc.x + 55, sc.y, sc.z}, sr, C_BLACK, 0.4f);
+  g->stTop = sc.z < 0 ? sc.y + sr + 40 : -1e9f;
   Cyl((Vector3){sc.x - 30, sc.y + sr + 14, sc.z}, (Vector3){sc.x + 30, sc.y + sr + 14, sc.z}, 16, C_STEEL, 0.6f);
   Box((Vector3){sc.x, sc.y + sr + 4, sc.z}, (Vector3){40, 22, 14}, MatrixIdentity(), C_STEEL, 0.6f);
  }
  // ---- intake
  gGroup = G_INTAKE;
- int vtop = g->nb == 2 || b->layout == 4;
- Vector3 E, D;
+ int vtop = g->nb == 2 || b->layout == 4 || g->custom;
+ Vector3 E, D; int itb = 0;
  float pr = fmaxf(b->bore * 0.16f, 9);
  Color plenC = b->block == 0 ? (Color){150, 154, 160, 255} : Shade(blk, 1.1f);
  if (g->n == 1) {
@@ -721,6 +827,47 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   float pl = g->L * 0.9f;
   Box((Vector3){0, y, z}, (Vector3){pl, 72, 64}, MatrixIdentity(), plenC, 0.5f);
   E = (Vector3){-pl * 0.5f, y, z}; D = (Vector3){-1, 0, 0};
+ } else if (g->custom) {
+  // plenum goes on whichever side most intake ports face; runners bolt to every port
+  float sy = 0, sz = 0;
+  for (int i = 0; i < g->n; i++) { Vector3 ax = Vector3Subtract(BP(g->a[i], 0, 1, 0), BP(g->a[i], 0, 0, 0)); sy += g->inD[i].y + 0.6f * ax.y; sz += g->inD[i].z + 0.6f * ax.z; }
+  Vector3 dir = {0, 1, 0};
+  float sa[16]; for (int i = 0; i < g->n; i++) sa[i] = atan2f(sinf(g->a[i]), cosf(g->a[i]));
+  for (int i = 1; i < g->n; i++) for (int k = i; k > 0 && sa[k] < sa[k - 1]; k--) { float t = sa[k]; sa[k] = sa[k - 1]; sa[k - 1] = t; }
+  float gap = sa[0] + 2 * PI - sa[g->n - 1];
+  for (int i = 1; i < g->n; i++) gap = fmaxf(gap, sa[i] - sa[i - 1]);
+  itb = gap < PI * 0.95f && b->forced == 0; g->itb = itb;
+  if (fabsf(sy) > 0.3f * g->n || fabsf(sz) > 0.3f * g->n) dir = fabsf(sy) >= fabsf(sz) ? (Vector3){0, sy > 0 ? 1.f : -1.f, 0} : (Vector3){0, 0, sz > 0 ? 1.f : -1.f};
+  if (dir.y < -0.5f) dir = (Vector3){0, 0, sz >= 0 ? 1.f : -1.f};
+  Vector3 perp = {0, -dir.z, dir.y};
+  float reach = -1e9f;
+  for (int i = 0; i < g->n; i++) {
+   reach = fmaxf(reach, Vector3DotProduct(g->inP[i], dir) + 55);
+   for (int sd = -1; sd <= 1; sd += 2) reach = fmaxf(reach, Vector3DotProduct(BP(g->a[i], 0, g->deck + g->headH + 40, sd * g->headW * 0.5f), dir) + 34);
+  }
+  if (dir.z != 0) reach = fmaxf(reach, g->ccW * 0.5f + 60);
+  Vector3 c = Vector3Scale(dir, reach);
+  float fsI = Clampf(sqrtf(s->dispL / g->n) * 0.75f, 0.35f, 0.9f);
+  // spread-out layouts with no common side: one carb/throttle + filter per cylinder, straight off each port
+  if (itb) for (int i = 0; i < g->n; i++) {
+   Vector3 a0 = Vector3Subtract(g->inP[i], Vector3Scale(g->inD[i], 4)), a1 = Vector3Add(g->inP[i], Vector3Scale(g->inD[i], 40));
+   Cyl(a0, a1, pr, plenC, 0.5f);
+   Vector3 t1 = Vector3Add(a1, Vector3Scale(g->inD[i], 34));
+   Cyl(Vector3Subtract(a1, Vector3Scale(g->inD[i], 2)), t1, pr * 1.45f, b->delivery == 0 ? (Color){200, 175, 95, 255} : (Color){170, 172, 178, 255}, 0.6f);
+   DrawFilter(b->filter == 4 ? 3 : b->filter, Vector3Subtract(t1, Vector3Scale(g->inD[i], 2)), g->inD[i], fsI);
+  }
+  if (!itb) for (int i = 0; i < g->n; i++) {
+   Vector3 m = Vector3Add(g->inP[i], Vector3Scale(g->inD[i], 25));
+   float sg2 = Vector3DotProduct(g->inP[i], perp) >= 0 ? 1.f : -1.f;
+   Vector3 e2 = Vector3Add(Vector3Add(c, Vector3Scale(dir, -20)), Vector3Scale(perp, sg2 * 28));
+   e2.x = g->x[i];
+   Vector3 pts[3] = {Vector3Subtract(g->inP[i], Vector3Scale(g->inD[i], 4)), m, e2};
+   Pipe(pts, 3, pr, plenC, 0.5f, gNoEmis);
+  }
+  float pl = fmaxf(g->L * 0.82f, 120);
+  if (!itb) Box(c, dir.y != 0 ? (Vector3){pl, 60, 120} : (Vector3){pl, 120, 60}, MatrixIdentity(), plenC, 0.5f);
+  E = Vector3Add(c, Vector3Scale(dir, 30)); D = dir;
+  g->inSide = itb ? 0 : (dir.z > 0.5f ? 1 : (dir.z < -0.5f ? -1 : 0));
  } else {
   float top = -1e9f;
   for (int i = 0; i < g->n; i++) top = fmaxf(top, g->inP[i].y);
@@ -758,11 +905,11 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
  }
  Vector3 tbEnd = Vector3Add(E, Vector3Scale(D, 48));
  Color tbC = b->delivery == 0 ? (Color){200, 175, 95, 255} : (Color){170, 172, 178, 255};
- if (b->delivery == 0) Box(Vector3Add(E, Vector3Scale(D, 24)), (Vector3){D.x != 0 ? 48 : 70, D.y != 0 ? 48 : 60, D.z != 0 ? 48 : 64}, MatrixIdentity(), tbC, 0.6f);
+ if (itb) {} else if (b->delivery == 0) Box(Vector3Add(E, Vector3Scale(D, 24)), (Vector3){D.x != 0 ? 48 : 70, D.y != 0 ? 48 : 60, D.z != 0 ? 48 : 64}, MatrixIdentity(), tbC, 0.6f);
  else Cyl(Vector3Subtract(E, Vector3Scale(D, 2)), tbEnd, fmaxf(b->bore * 0.3f, 18), tbC, 0.7f);
  float fs = Clampf(sqrtf(s->dispL) * 0.75f, 0.45f, 1.5f);
  int hasT = b->forced >= 1 && b->forced <= 3;
- if (!hasT) {
+ if (!hasT && !itb) {
   Vector3 fe = Vector3Add(tbEnd, Vector3Scale(D, Vector3Length(g->offFilter)));
   if (Vector3Length(g->offFilter) > 0) { gGroup = G_INTAKE; Cyl(Vector3Subtract(tbEnd, Vector3Scale(D, 2)), fe, fmaxf(b->bore * 0.28f, 16), tbC, 0.6f); }
   DrawFilter(b->filter, fe, D, fs);
@@ -830,24 +977,31 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   if (hasT) {
    float k = (b->forced == 2 ? 1.3f : (b->forced == 3 ? 0.85f : 0.8f)) * Clampf(sqrtf(s->dispL / 2.f), 0.6f, 1.6f);
    int twins = b->forced == 3 ? 2 : 1;
+   int rearT = (g->nb == 2 && twins == 1) || (b->turboSide == 3 && twins == 1);
+   if (b->turboSide == 1 || b->turboSide == 2) {
+    float want = b->turboSide == 1 ? -1.f : 1.f;
+    int ok = 0; for (int bk2 = 0; bk2 < g->nb; bk2++) if ((lanePt[bk2].z >= 0 ? 1.f : -1.f) == want) ok = 1;
+    if (!ok) snprintf(g->attachErr, 96, "Turbo on the %s can't reach the exhaust manifold (exhaust is on the other side).", want < 0 ? "left" : "right");
+    else if (g->nb == 2 && twins == 1) snprintf(g->attachErr, 96, "A single turbo on a V/split-bank engine mounts at the rear so both banks reach it.");
+   }
    for (int t = 0; t < twins; t++) {
     int bk = g->nb == 2 ? t : 0;
     float sz = lanePt[bk].z >= 0 ? 1.f : -1.f;
     Vector3 tc;
-    if (g->nb == 2 && twins == 1) tc = Vector3Add((Vector3){tailX + 60, 30, 0}, g->offTurbo);
+    if (rearT) tc = Vector3Add((Vector3){tailX + 60, 30, 0}, g->offTurbo);
     else tc = Vector3Add((Vector3){lanePt[bk].x - 30 + (g->nb == 1 && twins == 2 ? (t ? 1 : -1) * g->L * 0.25f : 0), lanePt[bk].y + 120 * k, lanePt[bk].z + sz * 70 * k}, g->offTurbo);
     Vector3 cOut, cIn, tIn, tOut;
     gGroup = G_TURBO;
     if (t == 0) { g->hasTurbo = 1; g->turboPos = tc; g->turboK = k; }
     DrawTurbo(tc, k, &cOut, &cIn, &tIn, &tOut);
     gGroup = G_EXH;
-    if (g->nb == 2 && twins == 1) {
-     for (int bb = 0; bb < 2; bb++) { Vector3 q[3] = {lanePt[bb], {tailX - 20, lanePt[bb].y, lanePt[bb].z}, {tailX + 10, tIn.y - 20, tIn.z * 0.5f + lanePt[bb].z * 0.1f}}; Pipe(q, 3, pipeR * 1.1f, pipeC, 0.4f, glow); Vector3 q2[2] = {q[2], tIn}; Pipe(q2, 2, pipeR * 1.1f, pipeC, 0.4f, glow); }
+    if (rearT) {
+     for (int bb = 0; bb < g->nb; bb++) { Vector3 q[3] = {lanePt[bb], {tailX - 20, lanePt[bb].y, lanePt[bb].z}, {tailX + 10, tIn.y - 20, tIn.z * 0.5f + lanePt[bb].z * 0.1f}}; Pipe(q, 3, pipeR * 1.1f, pipeC, 0.4f, glow); Vector3 q2[2] = {q[2], tIn}; Pipe(q2, 2, pipeR * 1.1f, pipeC, 0.4f, glow); }
     } else { Vector3 q[3] = {lanePt[bk], {tIn.x, lanePt[bk].y + 10, tIn.z}, tIn}; Pipe(q, 3, pipeR * 1.2f, pipeC, 0.4f, glow); }
     Vector3 dp[3] = {tOut, {tOut.x - 10, laneY, tOut.z}, {tOut.x, laneY, tOut.z}};
     Pipe(dp, 2, pipeR * 1.3f, pipeC, 0.4f, glow);
     runFrom[t] = dp[1];
-    if (g->nb == 2 && twins == 1) { runFrom[0] = (Vector3){tc.x + 150 * k, laneY, tc.z}; Vector3 dq[3] = {tOut, {tOut.x, laneY, tOut.z}, runFrom[0]}; Pipe(dq, 3, pipeR * 1.3f, pipeC, 0.4f, glow); }
+    if (rearT) { runFrom[0] = (Vector3){tc.x + 150 * k, laneY, tc.z}; Vector3 dq[3] = {tOut, {tOut.x, laneY, tOut.z}, runFrom[0]}; Pipe(dq, 3, pipeR * 1.3f, pipeC, 0.4f, glow); }
     { gGroup = G_FILTER; Vector3 el = {cIn.x + 34 * k, cIn.y, cIn.z}; Vector3 fp[3] = {cIn, el, {el.x, el.y, el.z + sz * 40}}; Pipe(fp, 3, 24 * k, C_CHROME, 0.9f, gNoEmis); DrawFilter(b->filter, fp[2], (Vector3){0, 0, sz}, fs * 0.8f); gGroup = G_EXH; }
     // charge pipe up and over to the throttle (top-mount intercooler)
     gGroup = G_CHARGE;
@@ -910,20 +1064,46 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
   } else {
    float pR = rr * 0.8f + 28;
    Vector3 fp = Vector3Add((Vector3){frontX + 4, -(pR + 46), g->ccW * 0.18f * sideO}, g->offOil);
-   Cyl((Vector3){fp.x + 6, fp.y, fp.z}, (Vector3){fp.x - 16, fp.y, fp.z}, 30, C_STEEL, 0.6f);
-   Cyl((Vector3){fp.x - 14, fp.y, fp.z}, (Vector3){fp.x - 92, fp.y, fp.z}, 36, (Color){30, 60, 160, 255}, 0.3f);
+   if (b->filtPos == 1 || b->filtPos == 2) {
+    float sz2 = b->filtPos == 1 ? -1.f : 1.f;
+    fp = (Vector3){frontX + g->L * 0.25f, g->ccBot * 0.45f, sz2 * (g->ccW * 0.5f + 4)};
+    Cyl((Vector3){fp.x, fp.y, fp.z - sz2 * 8}, (Vector3){fp.x, fp.y, fp.z + sz2 * 16}, 30, C_STEEL, 0.6f);
+    Cyl((Vector3){fp.x, fp.y, fp.z + sz2 * 14}, (Vector3){fp.x, fp.y - 6, fp.z + sz2 * 92}, 36, (Color){30, 60, 160, 255}, 0.3f);
+   } else {
+    Cyl((Vector3){fp.x + 6, fp.y, fp.z}, (Vector3){fp.x - 16, fp.y, fp.z}, 30, C_STEEL, 0.6f);
+    Cyl((Vector3){fp.x - 14, fp.y, fp.z}, (Vector3){fp.x - 92, fp.y, fp.z}, 36, (Color){30, 60, 160, 255}, 0.3f);
+   }
    if (b->lube == 2) {
     float fxe = rearX + 12 + g->flyT;
     Vector3 tk = Vector3Add((Vector3){fxe + 80, g->flyR * 0.15f, 0}, (Vector3){fmaxf(g->offOil.x, 0), 0, 0});
     Cyl((Vector3){tk.x, tk.y - 120, tk.z}, (Vector3){tk.x, tk.y + 110, tk.z}, 55, (Color){60, 62, 68, 255}, 0.7f);
+    g->tankP = tk;
     Cyl((Vector3){tk.x, tk.y + 108, tk.z}, (Vector3){tk.x, tk.y + 126, tk.z}, 20, C_CHROME, 0.9f);
     float ly = g->ccBot - g->panH - 34;
+    if (g->panH <= 0) {
+     // scavenge straight off the crankcase side, over the flywheel, into the tank top
+     int sd = g->inSide ? -g->inSide : 1;
+     float sz = g->ccW * 0.5f, oy = fmaxf(g->flyR + 16, tk.y + 150);
+     for (int k = 0; k < 2; k++) {
+      float xx = k ? fp.x - 50 : g->L * 0.3f, zz = sd * (sz + 14 + k * 20);
+      Vector3 l[5] = {{xx, 0, sd * (sz - 4)}, {xx, 0, zz}, {xx, oy, zz}, {tk.x - 30 + k * 60, oy, zz}, {tk.x - 30 + k * 60, tk.y + 100, (k ? -18.f : 18.f)}};
+      Pipe(l, 5, 8, C_RUBBER, 0.2f, gNoEmis);
+     }
+    } else {
     Vector3 l1[4] = {{g->L * 0.3f, g->ccBot - g->panH + 4, 18}, {g->L * 0.3f, ly, 18}, {tk.x - 30, ly, 18}, {tk.x - 30, tk.y - 118, 18}};
     Pipe(l1, 4, 8, C_RUBBER, 0.2f, gNoEmis);
     Vector3 l2[4] = {{tk.x - 30, tk.y - 118, -18}, {tk.x - 30, ly, -18}, {fp.x - 50, ly, -18}, {fp.x - 50, fp.y - 34, -18}};
     Pipe(l2, 4, 8, C_RUBBER, 0.2f, gNoEmis);
+    }
    }
    if (b->oilCooler) {
+    if (g->panH <= 0 && g->custom) {
+     // panless dry sump: cooler stands beside the tank, plumbed straight into it
+     Vector3 tk = g->tankP, oc = {tk.x, tk.y, 150};
+     Box(oc, (Vector3){22, 170, 150}, MatrixIdentity(), (Color){50, 52, 56, 255}, 0.5f);
+     for (int k = -3; k <= 3; k++) Box((Vector3){oc.x + 12, oc.y + k * 22.f, oc.z}, (Vector3){4, 4, 144}, MatrixIdentity(), (Color){80, 82, 86, 255}, 0.4f);
+     for (int k = -1; k <= 1; k += 2) { Vector3 c1[2] = {{tk.x, tk.y + k * 60, 40}, {tk.x, tk.y + k * 60, oc.z - 70}}; Pipe(c1, 2, 9, C_RUBBER, 0.2f, gNoEmis); }
+    } else {
     Vector3 oc = {frontX - 40, fp.y - 95, 0};
     Box(oc, (Vector3){150, 22, 170}, MatrixIdentity(), (Color){50, 52, 56, 255}, 0.5f);
     for (int k = -3; k <= 3; k++) Box((Vector3){oc.x + k * 20.f, oc.y - 12, 0}, (Vector3){4, 4, 164}, MatrixIdentity(), (Color){80, 82, 86, 255}, 0.4f);
@@ -931,6 +1111,7 @@ static void DrawEngine(const Build *b, const Spec *s, float crankDeg, DrawState 
     Pipe(c1, 2, 6, C_RUBBER, 0.2f, gNoEmis);
     Vector3 c2[2] = {{fp.x - 70, fp.y - 30, fp.z - 14}, {fp.x - 70, oc.y + 8, fp.z - 14}};
     Pipe(c2, 2, 6, C_RUBBER, 0.2f, gNoEmis);
+    }
    }
   }
  }
@@ -986,7 +1167,7 @@ static void DrawStand(const Geo *g) {
  int sg = gGroup; gGroup = G_STAND;
  gBase = MatrixScale(0.01f, 0.01f, 0.01f);
  float H = g->H * 100;
- float bot = H + g->ccBot - g->panH + 6;
+ float bot = H + fminf(g->ccBot - g->panH, g->lowY) + 6;
  float pw = g->panH > 0 ? g->ccW * 0.8f : g->ccW;
  Color sc = {200, 90, 30, 255};
  float px = g->L * 0.28f, pz = pw * 0.28f;
@@ -1003,6 +1184,7 @@ static void DrawStand(const Geo *g) {
 static int MoverOf(int a, int b) {
  static const int rank[G_N] = {0, 0, 0, 0, 0, 0, 6, 6, 0, 4, 2, 4, 4, 2, 7, 0, 6};
  if (a == G_COOL || b == G_COOL) return G_COOL;
+ if (G.itb && ((a == G_FILTER && b == G_EXH) || (a == G_EXH && b == G_FILTER) || (a == G_INTAKE && b == G_EXH) || (a == G_EXH && b == G_INTAKE))) return G_EXH;
  return rank[a] >= rank[b] ? a : b;
 }
 static int gConf[G_N][G_N];
@@ -1024,8 +1206,8 @@ static void SolveLayout(const Build *b, const Spec *s) {
    int mv = MoverOf(a, c);
    const float st = 14.f;
    switch (mv) {
-   case G_ALT: if (g->offAlt.x > -110) { g->offAlt.x -= st; moved = 1; break; } { Vector3 d = {0, 0.4f, g->offAlt.z + (g->nb == 2 ? 0 : (g->inD[0].z >= 0 ? 1 : -1))}; if (g->nb == 2) d = (Vector3){0, 1, 0}; g->offAlt = Vector3Add(g->offAlt, Vector3Scale(Vector3Normalize(d), st)); moved = 1; } break;
-   case G_STARTER: g->offStarter = Vector3Add(g->offStarter, (Vector3){0, -st * 0.6f, -st * 0.8f}); moved = 1; break;
+   case G_ALT: if (b->placeMan) break; if (g->offAlt.x > -110) { g->offAlt.x -= st; moved = 1; break; } { Vector3 d = {0, 0.4f, g->offAlt.z + (g->nb == 2 ? 0 : (g->inD[0].z >= 0 ? 1 : -1))}; if (g->nb == 2) d = (Vector3){0, 1, 0}; g->offAlt = Vector3Add(g->offAlt, Vector3Scale(Vector3Normalize(d), st)); moved = 1; } break;
+   case G_STARTER: if (b->placeMan) break; g->offStarter = Vector3Add(g->offStarter, (Vector3){0, -st * 0.6f, -st * 0.8f}); moved = 1; break;
    case G_TURBO: case G_FILTER: if (mv == G_FILTER && !(b->forced >= 1 && b->forced <= 3)) g->offFilter.x += st; else { g->offTurbo.y += st * 0.7f; g->offTurbo.z += (g->offTurbo.z >= 0 ? 1 : -1) * st * 0.7f; } moved = 1; break;
    case G_CHARGE: g->offCharge.y += st; moved = 1; break;
    case G_SC: g->offSC.y += st; moved = 1; break;

@@ -292,28 +292,16 @@ static void AudioCB(void *buf, unsigned int frames) {
 }
 
 static void AudioSetupEngine(const Build *b, const Spec *s) {
- int n = b->cyl;
- float cyc = b->cycle ? 360.f : 720.f;
- int nb = b->layout >= 2 ? 2 : 1;
+ float x[16], an[16]; int bk[16];
+ int n = CylGeom(b, x, an, bk);
  AU.ncyl = 0;
- static const int FO3[] = {1,2,3}, FO4[] = {1,3,4,2}, FO5[] = {1,2,4,5,3}, FO6[] = {1,5,3,6,2,4}, FO8[] = {1,6,2,5,8,3,7,4};
- static const int FOV4[] = {1,3,2,4}, FOV6[] = {1,4,2,5,3,6}, FOV8[] = {1,8,4,3,6,5,7,2}, FOV10[] = {1,6,5,10,2,7,3,8,4,9}, FOV12[] = {1,7,5,11,3,9,6,12,2,8,4,10};
- static const int FOB4[] = {1,3,2,4}, FOB6[] = {1,6,2,4,3,5};
- const int *fo = NULL;
- if (!b->cycle) {
-  if (nb == 1) fo = n == 3 ? FO3 : n == 4 ? FO4 : n == 5 ? FO5 : n == 6 ? FO6 : n == 8 ? FO8 : NULL;
-  else if (b->layout == 4) fo = n == 4 ? FOB4 : n == 6 ? FOB6 : NULL;
-  else fo = n == 4 ? FOV4 : n == 6 ? FOV6 : n == 8 ? FOV8 : n == 10 ? FOV10 : n == 12 ? FOV12 : NULL;
- }
- for (int i = 0; i < n; i++) { AU.fire[i] = cyc * i / n; AU.bank[i] = nb > 1 ? (i & 1) : 0; }
- if (fo) for (int slot = 0; slot < n; slot++) AU.fire[fo[slot] - 1] = cyc * slot / n;
- if (n == 2 && b->layout >= 2 && b->layout <= 3) AU.fire[1] = b->cycle ? 180.f : 360.f - 2 * LAYOUT_HALF[b->layout];
- // header runner delays: front cylinders have longer pipes to the rear collector
- float pitch = b->bore * 1.18f + 10, m = nb == 2 ? (n + 1) / 2 : n;
+ FireAngles(b, AU.fire);
+ int nb = 1;
+ for (int i = 0; i < n; i++) { AU.bank[i] = bk[i] & 1; if (bk[i]) nb = 2; }
+ float xmax = -1e9f;
+ for (int i = 0; i < n; i++) xmax = fmaxf(xmax, x[i]);
  for (int i = 0; i < n; i++) {
-  int pos = nb == 2 ? i >> 1 : i;
-  float xback = (m - 1 - pos) * pitch;
-  float len = 0.35f + xback * 1e-3f * (b->exhaust == 1 ? 0.4f : 1.f);
+  float len = 0.35f + (xmax - x[i]) * 1e-3f * (b->exhaust == 1 ? 0.4f : 1.f);
   AU.delay[i] = len / 520.f;
  }
  unsigned r = 777;
