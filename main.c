@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <ctype.h>
+#include <stdarg.h>
+#include <time.h>
 #include "font_reg.h"
 #include "font_bold.h"
 #include "sim.c"
@@ -681,6 +683,8 @@ static void BuildPanel(int sw, int sh) {
  if (ch) OnBuildChanged();
 }
 
+#include "shop.c"
+
 static void SpecCard(int sw, int sh) {
  float w = 400, x = sw - w - 12, y = 64;
  int nw = gNWarn > 6 ? 6 : gNWarn;
@@ -737,7 +741,8 @@ static void SpecCard(int sw, int sh) {
    Tx(gWarn[i], x + 30, yy, s2, gWarnSev[i] >= 2 ? (Color){255, 140, 125, 255} : COL_TXT); yy += 22;
   }
  }
- if (UiButton((Rectangle){x, sh - 128, w, 42}, "ENGINE OVERVIEW  [O]", 0, 1)) gShowOverview ^= 1;
+ if (UiButton((Rectangle){x, sh - 128, w * 0.5f - 4, 42}, "OVERVIEW  [O]", 0, 1)) gShowOverview ^= 1;
+ if (UiButton((Rectangle){x + w * 0.5f + 4, sh - 128, w * 0.5f - 4, 42}, "BUILD TO SELL  >", 2, 1)) { gShop = 1; gShopTab = 1; }
  int blocked = -1;
  for (int i = 0; i < gNWarn; i++) if (gWarnSev[i] == 3) { blocked = i; break; }
  if (UiButton((Rectangle){x, sh - 78, w, 64}, blocked >= 0 ? "CAN'T MOUNT A PART  (see warnings)" : "FIRE IT UP ON THE DYNO  >", blocked >= 0 ? 3 : 1, 1)) {
@@ -1164,10 +1169,11 @@ static void TopBar(int sw) {
  DrawRectangle(0, 52, sw, 1, COL_LINE);
  Tb("ENGINE", 18, 12, 26, COL_ACC);
  Tb("GARAGE", 18 + Tw("ENGINE ", 26, 1), 12, 26, COL_TXT);
- Tx(gMode ? "Dyno cell" : "Build bench", 26 + Tw("ENGINE GARAGE", 26, 1), 19, 16, COL_DIM);
+ Tx(gShop ? "Shop office" : (gMode ? "Dyno cell" : "Build bench"), 26 + Tw("ENGINE GARAGE", 26, 1), 19, 16, COL_DIM);
  if (gDev) { DrawRectangleRounded((Rectangle){340, 13, 120, 26}, 0.4f, 6, COL_RED); TxC("DEV 2323", 400, 17, 15, COL_TXT, 1); }
  if (UiButton((Rectangle){sw - 222, 9, 210, 34}, TextFormat("CHALLENGES  %d/%d", AchCount(), NACH), gShowAch ? 1 : 0, 1)) gShowAch ^= 1;
  if (UiButton((Rectangle){sw - 400, 9, 170, 34}, gMusicOn ? "MUSIC: ON  [N]" : "MUSIC: OFF  [N]", 0, 1)) gMusicOn ^= 1;
+ if (UiButton((Rectangle){470, 9, 250, 34}, TextFormat("SHOP  $%.0f  [H]", C.money), gShop ? 1 : 2, 1)) { gShop ^= 1; if (gShop) gMode = 0; }
  if (UiButton((Rectangle){sw - 530, 9, 122, 34}, "SETTINGS", gShowSettings ? 1 : 0, 1)) { gShowSettings ^= 1; if (!gShowSettings) SettingsSave(); }
  TxR(gMuted ? "SOUND MUTED [M]" : TextFormat("VOL %.0f%%  (+/-)", gSet.master * 100), sw - 542, 18, 14, COL_DIM, 0);
 }
@@ -1190,6 +1196,7 @@ static void AchPanel(int sw, int sh) {
 static void Toasts(int sw, float dt) {
  float y = gMode ? 154 : 66;
  if (gMode == 0) y = 70;
+ if (gShop) y = GetScreenHeight() - 60;
  for (int i = 0; i < 6; i++) {
   if (gToast[i].t <= 0) continue;
   gToast[i].t -= dt;
@@ -1197,9 +1204,10 @@ static void Toasts(int sw, float dt) {
   float sz = 18, w = Tw(gToast[i].s, sz, 1) + 32;
   float x = sw * 0.5f - w * 0.5f;
   if (gMode == 0) x = 500;
+  if (gShop) x = sw - w - 30;
   DrawRectangleRounded((Rectangle){x, y, w, 34}, 0.4f, 6, Fade((Color){12, 13, 16, 255}, 0.9f * a));
   Tb(gToast[i].s, x + 16, y + 7, sz, Fade(gToast[i].c, a));
-  y += 40;
+  y += gShop ? -40 : 40;
  }
 }
 
@@ -1263,6 +1271,27 @@ static void RenderSounds(const char *dir, int only) {
 }
 
 int main(int argc, char **argv) {
+ if (getenv("SHOPSIM")) {
+  gAutotest = 1; CareerNew(); C.rng = 42;
+  for (int p = 0; p < NPRESET; p++) {
+   C.equip[0] = 1; C.equip[2] = 1; C.equip[3] = 1;
+   Quote q = ShopQuote(&PRESETS[p], 0); Item it; ItemFromBuild(&it, &PRESETS[p]); int bs; float v = BestValue(&it, 1, &bs);
+   C.equip[2] = C.equip[3] = 0; Quote q0 = ShopQuote(&PRESETS[p], 0);
+   printf("QUOTE %-20s cost $%6.0f (full shop $%6.0f) %4.1f days  value $%6.0f (%s) risk %d ok %d %s\n", PRESETS[p].name, QuoteTotal(&q0, 1), QuoteTotal(&q, 1), q0.days, v, SEG_NAME[bs], it.risk, q0.ok, q0.why);
+  }
+  CareerNew(); C.rng = 7;
+  C.money -= 3500; C.equip[0] = 1;
+  int pick = atoi(getenv("SHOPSIM"));
+  for (int round = 0; round < 6; round++) {
+   if (!StartBuild(&PRESETS[pick], 1)) { printf("cant build: money %.0f\n", C.money); break; }
+   int d0 = C.day; while (C.job[0].used && C.day < d0 + 30) ShopDay();
+   for (int i = 0; i < NITEM; i++) if (C.inv[i].used && C.inv[i].site < 0) { C.inv[i].site = 0; C.inv[i].price = roundf(BestValue(&C.inv[i], 0, NULL) / 25) * 25; }
+   int s0 = C.sales; d0 = C.day;
+   while (C.sales == s0 && C.day < d0 + 60) { ShopDay(); for (int o = 0; o < NOFFER; o++) if (C.off[o].used && !C.off[o].scam) { SellItem(C.off[o].item, C.off[o].amount, 0, "x"); C.off[o].used = 0; } }
+   printf("round %d day %d money %.0f rep %.1f sales %d  %s\n", round, C.day, C.money, C.rep, C.sales, C.log[C.nlog-1].s);
+  }
+  return 0;
+ }
  if (getenv("SOUNDS")) { RenderSounds(getenv("SOUNDS"), getenv("ONLY") ? atoi(getenv("ONLY")) : -1); return 0; }
  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--autotest") && i + 1 < argc) { gAutotest = 1; snprintf(gShotDir, 256, "%s", argv[i + 1]); }
  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
@@ -1277,7 +1306,7 @@ int main(int argc, char **argv) {
  GenTextureMipmaps(&fB.texture); SetTextureFilter(fB.texture, TEXTURE_FILTER_TRILINEAR);
  rlSetClipPlanes(0.2, 250);
  RenderInit();
- SaveRead(); SettingsLoad();
+ SaveRead(); SettingsLoad(); CareerLoad();
  gB = PRESETS[gPreset];
  OnBuildChanged(); ResetCamDist();
  SimReset(&gM, &gS, 0);
@@ -1341,6 +1370,16 @@ int main(int argc, char **argv) {
  Camera3D cam = {0}; cam.up = (Vector3){0, 1, 0}; cam.fovy = 38; cam.projection = CAMERA_PERSPECTIVE;
  int uiShot = getenv("UISHOT") ? 1 : 0, uiF = 0;
  if (uiShot) { gB = PRESETS[8]; gB.gov = 4; gB.govSet = 4200; OnBuildChanged(); gTab = 4; }
+ int shopShot = getenv("SHOPSHOT") ? 1 : 0, shF = 0, shT = 0;
+ if (shopShot) {
+  gNoCareerSave = 1; CareerNew(); C.rng = 5; C.money = 30000; C.equip[0] = 1; C.equip[1] = 1;
+  StartBuild(&PRESETS[3], 1); for (int i = 0; i < 6; i++) ShopDay();
+  StartBuild(&PRESETS[2], 1); for (int i = 0; i < 2; i++) ShopDay();
+  C.inv[0].site = 0; C.rep = 12; NewContract(); NewContract();
+  for (int i = 0; i < 4; i++) ShopDay();
+  C.stock[5] = 120; C.stockCost[5] = 270; C.ad[1] = 2;
+  gB = PRESETS[3]; OnBuildChanged(); gShop = 1; gShopTab = 0; gInvSel = -1;
+ }
  while (!WindowShouldClose()) {
   float dt = gAutotest ? 1.f / 60.f : fminf(GetFrameTime(), 0.05f);
   gTime += dt;
@@ -1356,7 +1395,9 @@ int main(int argc, char **argv) {
   }
   if (gEditName) goto skipKeys;
   if (IsKeyPressed(KEY_M)) gMuted ^= 1;
-  if (IsKeyPressed(KEY_O) && gMode == 0) gShowOverview ^= 1;
+  if (IsKeyPressed(KEY_O) && gMode == 0 && !gShop) gShowOverview ^= 1;
+  if (IsKeyPressed(KEY_H) && !gEditName) { gShop ^= 1; if (gShop) gMode = 0; }
+  if (gShop && IsKeyPressed(KEY_ESCAPE)) gShop = 0;
   if (IsKeyPressed(KEY_V)) gDS.oilView ^= 1;
   if (IsKeyPressed(KEY_N)) gMusicOn ^= 1;
   if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) gSet.master = Clampf(gSet.master + 0.1f, 0, 1);
@@ -1496,14 +1537,16 @@ int main(int argc, char **argv) {
   UpdateCamera3D(&cam, 1);
   BeginDrawing();
   ClearBackground(COL_BG);
-  Scene3D(cam);
+  if (!gShop) Scene3D(cam);
   TopBar(sw);
-  if (gMode == 0) { BuildPanel(sw, sh); SpecCard(sw, sh); ViewBar(sw); if (gShowOverview) Overview(sw, sh); }
+  if (gShop) ShopScreen(sw, sh);
+  else if (gMode == 0) { BuildPanel(sw, sh); SpecCard(sw, sh); ViewBar(sw); if (gShowOverview) Overview(sw, sh); }
   else TestHUD(sw, sh);
   if (gShowAch) AchPanel(sw, sh);
   if (gShowSettings) SettingsPanel(sw, sh);
   Toasts(sw, dt);
   EndDrawing();
+  if (shopShot && ++shF == 6) { snprintf(gShotDir, 256, "%s", getenv("SHOPSHOT")); Shot(TextFormat("shop%d", shT)); shF = 0; if (++shT >= 8) break; gShopTab = shT; }
   if (uiShot && ++uiF == 8) { snprintf(gShotDir, 256, "%s", getenv("UISHOT")); Shot(TextFormat("ui%d", uiShot)); if (++uiShot > 2) break; uiF = 0; gTab = 4; gShowOverview = uiShot == 2; }
  }
  if (audioOk) { UnloadAudioStream(stream); CloseAudioDevice(); }

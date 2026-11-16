@@ -25,6 +25,16 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
   - Parts that don't fit block the build. Under-rated parts fail during the run (snapped recoil spring, burned-out starter, exploded flywheel, dead battery).
 - **Oil:** splash dipper, wet sump or dry sump; oil grade, capacity and oil cooler. Tilted cylinders drain oil back slowly, so it pools in the heads and the sump starves. The 3D **Oil Flow view** shows oil moving from the pickup to the pump, galleries, bearings and heads and back.
 
+## Running a shop
+Press **H** (or the green SHOP button) to open your shop office. You start with $10,000.
+- **Workshop:** buy a fabrication bench ($3,500) and you can build the design on your bench one-off. Later: engine dyno (dyno sheets sell for more), CNC (faster, needed for billet), foundry (cheap castings, needed for CGI/magnesium), a second bay, a warehouse, a paint booth and a $75k production line for batch builds at volume cost.
+- **Materials:** cast iron, aluminum, CGI, magnesium, billet, steel and titanium with daily prices, shortages, local buys and cheaper bulk orders. Run short mid-build and it rush-buys at +25%.
+- **Marketplaces:** LocalList (free, few buyers, lowballers and scammers), SwapBay (listing + final value fees), TorqueTrader (enthusiasts, subscription, needs reputation), your own website (setup + hosting), IndustrialSource (B2B), or dump it on a dealer for 55%.
+- **Buyers:** lawn & garden, karts, bikes, cars, racing, trucks, marine, industrial, aircraft and collectors each judge your engine differently and have budgets. They buy, make offers, or walk.
+- **Advertising:** flyers, social, search ads, racing magazines, trade journals and trade show booths, each pulling different buyers to different sites.
+- **Risk:** engines with red warnings fail after the sale. A warranty sells for more but you refund failures; as-is costs you reputation.
+- **Contracts, rent, utilities, a bank loan,** and a ledger. Go below -$15,000 and the bank takes the shop.
+
 ## The sim
 Calibrated against real engines (Predator 212, Honda GCV160, YZ250, EA888, LS3, Cummins 6.7, Lamborghini V12, VW 1600, Honda K20) to within about ±15%.
 - **Breathing and power:** volumetric efficiency, small-cylinder heat loss, friction and pumping losses, turbo spool and choke, knock, cylinder pressure, reciprocating-inertia rev limits, breathing-limited redline

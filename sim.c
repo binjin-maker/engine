@@ -178,7 +178,7 @@ typedef struct {
  float govSet;
 } Build;
 static float GovSet(const Build *b) { return b->govSet >= 1000 ? fminf(b->govSet, 6000) : 3000; }
-static float GovCost(const Build *b) { return b->gov == 4 ? 25 + (GovSet(b) - 1000) / 5000.f * 95 : (b->gov == 3 ? 60 : (b->gov ? 12 : 0)); }
+static float GovCost(const Build *b) { return b->gov == 4 ? 60 + powf((GovSet(b) - 1000) / 5000.f, 1.5f) * 640 : (b->gov == 3 ? 380 : (b->gov == 2 ? 70 : (b->gov ? 45 : 0))); }
 static float WallMM(const Build *b) { return b->wall > 0.5f ? b->wall : 8.f; }
 static float SpacingMM(const Build *b) { return b->spacing > 0.5f ? b->spacing : 10.f; }
 static const char *DECKS[] = {"Semi-closed", "Open deck", "Closed deck"};
@@ -216,6 +216,7 @@ typedef struct {
  float imepPk, fric, pLimit, coolCap, danger, heatC, stall, compDrag, idle, weight, cost, lube;
  int hasBatt, needsElec, limitBy, magneto, ninj;
  float oilNeed, oilMax, oilHeadCap, drainK;
+ float matKg[7], bought, machHours;
  float blockEff, intEff, govRpm, topRpm, injHp, needCfm, demandA, mfgOne, mfgK, decomp, uncappedHp;
  float estHp, estHpRpm, estTq, estTqRpm, estImep;
  int npts; float crpm[160], chp[160], ctq[160];
@@ -630,6 +631,14 @@ static void ComputeSpec(const Build *b, Spec *s) {
   + (DECK_COST[b->deck] + SKIRT_COST[b->skirt]) * (0.4f + 0.3f * L) + CAPS_COST[b->caps] * (0.3f + 0.1f * b->cyl) + (b->balShaft ? 120 + 60 * L : 0)
   + IGN_COST[b->ignition] * (b->ignition == 4 ? b->cyl * 0.5f : 1) + (two ? 0 : CAMDRV_COST[b->camDrive] * (0.5f + 0.25f * L));
  s->mfgOne = matl * 1.6f + hours * 95.f + bought + 200;
+ // raw stock a one-off shop burns through: 0 iron 1 alu 2 CGI 3 Mg 4 billet alu 5 steel 6 titanium
+ memset(s->matKg, 0, sizeof s->matKg);
+ { static const int BM[] = {0, 1, 2, 3, 4}; static const float YIELD[] = {1.3f, 1.3f, 1.35f, 1.4f, 2.6f};
+   s->matKg[BM[b->block]] += blockKg * YIELD[b->block];
+   s->matKg[BLOCKS[b->block].weight < 0.7f ? 1 : 0] += headKg * 1.3f;
+   s->matKg[5] += intKg * 1.35f * (b->internals == 3 ? 0.65f : 1.f); if (b->internals == 3) s->matKg[6] += intKg * 0.45f;
+   float rest = s->weight - blockKg - headKg - intKg; s->matKg[5] += rest * 0.55f; s->matKg[1] += rest * 0.35f; }
+ s->bought = bought; s->machHours = hours;
  s->mfgK = matl * 0.85f + hours * 0.12f * 40.f + bought * 0.25f + 4 + 3 * b->cyl;
  s->cost = s->mfgK * 1.7f;
  // breathing: redline sits a bit past where power falls off, never above the mechanical limit
