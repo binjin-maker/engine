@@ -1291,6 +1291,24 @@ int main(int argc, char **argv) {
   }
   return 0;
  }
+ if (getenv("SHOPSIM2")) {
+  gNoCareerSave = 1;
+  int ps[] = {0, 1, 2, 3, 8};
+  for (int pi = 0; pi < 5; pi++) {
+   CareerNew(); C.rng = 11 + pi; C.money -= 3500; C.equip[0] = 1;
+   Build b = PRESETS[ps[pi]]; int built = 0;
+   for (int d = 0; d < 90 && !C.over; d++) {
+    int busy = 0; for (int j = 0; j < NJOB; j++) busy += C.job[j].used;
+    if (!busy && InvCount() < InvCap()) { Quote q = ShopQuote(&b, 0); if (q.ok && QuoteTotal(&q, 1) < C.money) { gToastQuiet = 1; StartBuild(&b, 1); built++; } }
+    for (int i = 0; i < NITEM; i++) if (C.inv[i].used && C.inv[i].site < 0) { C.inv[i].site = 0; C.inv[i].price = roundf(BestValue(&C.inv[i], 0, NULL) / 25) * 25; }
+    ShopDay();
+    for (int o = 0; o < NOFFER; o++) if (C.off[o].used && !C.off[o].scam && C.off[o].amount >= C.inv[C.off[o].item].price * 0.85f) { SellItem(C.off[o].item, C.off[o].amount, 0, "x"); C.off[o].used = 0; }
+   }
+   Quote q = ShopQuote(&b, 0);
+   printf("SIM2 %-18s cost $%5.0f  90d: built %2d sold %2d  money $%6.0f  rep %.0f\n", PRESETS[ps[pi]].name, QuoteTotal(&q, 1), built, C.sales, C.money, C.rep);
+  }
+  return 0;
+ }
  if (getenv("SOUNDS")) { RenderSounds(getenv("SOUNDS"), getenv("ONLY") ? atoi(getenv("ONLY")) : -1); return 0; }
  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--autotest") && i + 1 < argc) { gAutotest = 1; snprintf(gShotDir, 256, "%s", argv[i + 1]); }
  SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);

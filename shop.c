@@ -16,7 +16,7 @@ static const float MAT_BASE[NMAT] = {1.4f, 3.2f, 2.6f, 9.0f, 7.5f, 2.3f, 38.f};
 typedef struct { const char *name, *desc; float cost; } EquipDef;
 static const EquipDef EQUIP[NEQ] = {
  {"Fabrication bench", "Lathe, mill, welder and hand tools. Builds engines one at a time.", 3500},
- {"Engine dyno", "Every engine leaves with a dyno sheet. Buyers trust proven numbers and pay more.", 2500},
+ {"Engine dyno", "Every engine leaves with a dyno sheet. Buyers trust proven numbers and pay ~6% more.", 2500},
  {"CNC machining center", "Machines twice as fast, wastes less stock. Needed for billet blocks and billet internals.", 14000},
  {"Foundry", "Pour your own castings: cast blocks cost far less. Needed for CGI and magnesium blocks.", 22000},
  {"Second build bay", "Run two builds at once.", 9000},
@@ -28,7 +28,7 @@ static const EquipDef EQUIP[NEQ] = {
 typedef struct { const char *name, *desc; float traffic, pay, fee, listFee, monthly, setup, rep, offerK, scam; float mix[NSEG]; } SiteDef;
 //                         lawn kart moto car  race truck marine ind  air  odd
 static const SiteDef SITES[NSITE] = {
- {"LocalList", "Free local classifieds. No fees, few visitors, lots of lowballers (and the odd scammer).", 7, 0.85f, 0, 0, 0, 0, 0, 1.4f, 0.05f, {2, 2, 1, 1, 0.4f, 0.8f, 0.5f, 0.6f, 0.1f, 0.6f}},
+ {"LocalList", "Free local classifieds. No fees, lots of lowballers (and the odd scammer).", 14, 0.85f, 0, 0, 0, 0, 0, 1.4f, 0.05f, {2, 2, 1, 1, 0.4f, 0.8f, 0.5f, 0.6f, 0.1f, 0.6f}},
  {"SwapBay", "Huge nationwide auction site. $6 per listing each week + 10% final value fee.", 22, 1.0f, 0.10f, 6, 0, 0, 0, 1.0f, 0.01f, {1, 1, 1, 1, 1, 1, 1, 1, 0.5f, 1}},
  {"TorqueTrader", "Enthusiast marketplace. Performance buyers who pay up. $79/month + 6%. Needs reputation 15.", 14, 1.12f, 0.06f, 0, 79, 0, 15, 0.8f, 0, {0.1f, 0.4f, 2, 2, 3, 0.6f, 0.6f, 0.1f, 0.8f, 1.2f}},
  {"Your website", "Your own storefront. $1,200 to set up, $35/month, 3% card fees. Traffic comes from ads and reputation.", 2, 1.06f, 0.03f, 0, 35, 1200, 0, 0.7f, 0, {1, 1, 1, 1, 1, 1, 1, 1, 1, 1}},
@@ -149,12 +149,12 @@ static void ItemFromBuild(Item *it, const Build *b) {
  for (int k = 0; k < NSEG; k++) if (f[k] > 0 && it->vib > 0.6f && (k == 2 || k == 3 || k == 8)) f[k] *= 0.85f;
 }
 static float ItemQuality(const Item *it) {
- return (it->dyno ? 1.f : 0.88f) * (it->finish ? 1.08f : 1.f) * (it->warranty ? 1.1f : 1.f) * (0.85f + C.rep * 0.0035f)
+ return (it->dyno ? 1.f : 0.94f) * (it->finish ? 1.08f : 1.f) * (it->warranty ? 1.1f : 1.f) * (0.93f + C.rep * 0.002f)
   * (it->vib > 0.6f ? 0.93f : 1.f) * (it->risk ? 0.88f : 1.f) * (it->b.internals >= 2 ? 1.05f : 1.f) * ((it->b.block == 2 || it->b.block == 4) ? 1.03f : 1.f);
 }
 static float ItemValue(const Item *it, int seg, int site) {
  if (it->fit[seg] <= 0) return 0;
- float v = (80 + 26 * it->hp) * SEG_MULT[seg] * it->fit[seg] * ((it->diesel && seg >= 5 && seg <= 7) ? 1.6f : 1.f);
+ float v = (150 + 26 * it->hp) * SEG_MULT[seg] * it->fit[seg] * ((it->diesel && seg >= 5 && seg <= 7) ? 1.6f : 1.f);
  v *= ItemQuality(it);
  if (site >= 0) v *= SITES[site].pay;
  return fminf(v, SEG_BUDGET[seg]);
@@ -167,11 +167,11 @@ static float BestValue(const Item *it, int site, int *segOut) {
 }
 static float CompValue(int j) {
  const CompDef *d = &COMPS[j];
- float v = (80 + 26 * d->hp) * SEG_MULT[d->seg] * C.comp[j].q * ((d->diesel && d->seg >= 5 && d->seg <= 7) ? 1.6f : 1.f);
+ float v = (150 + 26 * d->hp) * SEG_MULT[d->seg] * C.comp[j].q * ((d->diesel && d->seg >= 5 && d->seg <= 7) ? 1.6f : 1.f);
  return fminf(v, SEG_BUDGET[d->seg]);
 }
 static void CompInit(void) {
- for (int j = 0; j < NCOMP; j++) { C.comp[j].q = COMPS[j].q; float v = CompValue(j); C.comp[j].base = C.comp[j].price = roundf(v * 0.93f / 5) * 5; C.comp[j].lastLogged = C.comp[j].price; }
+ for (int j = 0; j < NCOMP; j++) { C.comp[j].q = COMPS[j].q; float v = CompValue(j); C.comp[j].base = C.comp[j].price = roundf(v * 1.0f / 5) * 5; C.comp[j].lastLogged = C.comp[j].price; }
  C.compInit = 1;
 }
 static int CompFor(int seg, float hp) {
@@ -195,7 +195,7 @@ static Quote ShopQuote(const Build *b, int batch) {
  for (int m = 0; m < NMAT; m++) {
   float kg = s.matKg[m] * (m == 4 ? waste : (C.equip[2] ? 0.93f : 1.f)) * 0.85f;
   q.matKg[m] = kg;
-  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.45f : 1.f);
+  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.2f : 1.f);
   q.matCost += kg * pr;
  }
  // priced like a 10k-unit run: parts at volume prices, labor at line rates
@@ -216,7 +216,7 @@ static float QuoteTotal(const Quote *q, int qty) {
  float mat = 0;
  for (int m = 0; m < NMAT; m++) {
   float need = q->matKg[m] * qty, have = fminf(C.stock[m], need);
-  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.45f : 1.f);
+  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.2f : 1.f);
   mat += have * (C.stock[m] > 0 ? C.stockCost[m] / C.stock[m] : pr) + (need - have) * pr * 1.25f;
  }
  return mat + (q->bought + q->consum) * qty;
@@ -259,7 +259,7 @@ static void NewContract(void) {
  c->maxKg = seg <= 2 ? roundf(15 + c->minHp * 1.4f + CR01() * 20) : (seg == 8 ? roundf(c->minHp * 1.1f + 60) : 0);
  c->needGov = seg == 0 || seg == 7; c->needDiesel = seg == 5 && CR01() < 0.5f;
  c->qty = seg >= 3 && seg != 7 ? 1 + (int)(CR01() * 2) : 2 + (int)(CR01() * 4);
- c->pay = roundf((80 + 26 * c->minHp) * SEG_MULT[seg] * (1.15f + 0.25f * CR01()) / 10) * 10;
+ c->pay = roundf((150 + 26 * c->minHp) * SEG_MULT[seg] * (1.15f + 0.25f * CR01()) / 10) * 10;
  c->deadline = C.day + 10 + (int)(CR01() * 20);
  snprintf(c->client, 32, "%s", CLIENTS[seg][CR01() < 0.5f]);
 }
@@ -294,7 +294,7 @@ static void SellItem(int i, float price, int site, const char *buyer) {
   if (CR01() < pf) { C.sold[k].failDay = C.day + 2 + (int)(CR01() * 25); C.sold[k].refund = price; C.sold[k].warranty = it->warranty; snprintf(C.sold[k].name, 32, "%s", it->name); }
   break;
  }
- if (!it->risk) C.rep = fminf(100, C.rep + 1.5f);
+ if (!it->risk) C.rep = fminf(100, C.rep + Clampf(price / 2500.f, 0.15f, 1.5f));
  for (int o = 0; o < NOFFER; o++) if (C.off[o].used && C.off[o].item == i) C.off[o].used = 0;
  it->used = 0;
 }
@@ -328,13 +328,13 @@ static void ShopDay(void) {
   }
  }
  // bills
- float util = 4; for (int e = 0; e < NEQ; e++) util += C.equip[e] * (e == 5 ? 60 : (e == 3 ? 25 : 6));
+ float util = 3; for (int e = 0; e < NEQ; e++) util += C.equip[e] * (e == 5 ? 50 : (e == 3 ? 20 : 4));
  Pay(util, NULL); C.pendUtil += util;
  float adSpend = 0; for (int a = 0; a < NAD; a++) adSpend += C.ad[a] * ADS[a].perDay;
  if (adSpend > 0) { Pay(adSpend, NULL); C.pendAds += adSpend; }
  C.rep = fminf(100, C.rep + C.ad[3] * 0.06f + C.ad[4] * 0.03f);
  if (C.day % 30 == 0) {
-  Pay(900, "Shop rent");
+  Pay(500, "Shop rent");
   for (int si = 0; si < NSITE; si++) if (C.siteOn[si] && SITES[si].monthly > 0) Pay(SITES[si].monthly, TextFormat("%s subscription", SITES[si].name));
  }
  if (C.day % 7 == 0) {
@@ -451,10 +451,10 @@ static void TabDashboard(float x, float y, float w, float h) {
  yy = ShopRow(x, yy, cw, "Failures in the field", TextFormat("%d", C.warrantyClaims), C.warrantyClaims ? COL_RED : COL_TXT);
  yy = ShopRow(x, yy, cw, "This month in / out", TextFormat("$%.0f / $%.0f", C.income30, C.spend30), COL_TXT);
  yy = ShopRow(x, yy, cw, "In stock", TextFormat("%d / %d", InvCount(), InvCap()), COL_TXT);
- float util = 4; for (int e = 0; e < NEQ; e++) util += C.equip[e] * (e == 5 ? 60 : (e == 3 ? 25 : 6));
+ float util = 3; for (int e = 0; e < NEQ; e++) util += C.equip[e] * (e == 5 ? 50 : (e == 3 ? 20 : 4));
  float ad = 0; for (int a = 0; a < NAD; a++) ad += C.ad[a] * ADS[a].perDay;
  yy = ShopRow(x, yy, cw, "Daily costs (utilities + ads)", TextFormat("$%.0f", util + ad), COL_TXT);
- yy = ShopRow(x, yy, cw, "Rent", "$900 every 30 days", COL_TXT);
+ yy = ShopRow(x, yy, cw, "Rent", "$500 every 30 days", COL_TXT);
  // cash chart
  yy += 14; Tb("CASH, LAST 60 DAYS", x, yy, 14, COL_DIM); yy += 22;
  Rectangle g = {x, yy, cw, 150};
@@ -558,7 +558,7 @@ static void TabWorkshop(float x, float y, float w, float h) {
 
 static void TabMaterials(float x, float y, float w, float h) {
  Tb("RAW STOCK", x, y, 18, COL_DIM);
- Tx("Buy ahead when prices are low. Without a foundry, cast metals come as outsourced castings (+45%). Running short during a build rush-buys at +25%.", x, y + 26, 14, COL_DIM);
+ Tx("Buy ahead when prices are low. Without a foundry, cast metals come as outsourced castings (+20%). Running short during a build rush-buys at +25%.", x, y + 26, 14, COL_DIM);
  float yy = y + 60;
  float cols[] = {x, x + 190, x + 330, x + 470, x + 610};
  Tb("Material", cols[0], yy, 14, COL_DIM); Tb("Price/kg", cols[1], yy, 14, COL_DIM); Tb("In stock", cols[2], yy, 14, COL_DIM); Tb("Avg paid", cols[3], yy, 14, COL_DIM); Tb("Buy now (local)          Bulk 1 t: -20%, 4 days", cols[4], yy, 14, COL_DIM);
@@ -631,7 +631,7 @@ static void TabInventory(float x, float y, float w, float h) {
  float ry = y;
  Tb(it->name, rx, ry, 22, COL_TXT); ry += 30;
  Tx(TextFormat("%.0f hp, %.0f lb-ft, %.0f kg, %.2f L, redline %.0f%s", it->hp, it->lbft, it->kg, it->dispL, it->redline, it->gov ? ", governed" : ""), rx, ry, 15, COL_DIM); ry += 22;
- Tx(TextFormat("%s%s%s", it->dyno ? "Dyno sheet included.  " : "No dyno sheet (buyers pay ~12% less).  ", it->finish ? "Powder coated.  " : "", it->risk ? "Has red warnings: may fail after sale." : "Solid build."), rx, ry, 14, it->risk ? (Color){255, 140, 125, 255} : COL_DIM); ry += 30;
+ Tx(TextFormat("%s%s%s", it->dyno ? "Dyno sheet included.  " : "No dyno sheet (buyers pay ~6% less).  ", it->finish ? "Powder coated.  " : "", it->risk ? "Has red warnings: may fail after sale." : "Solid build."), rx, ry, 14, it->risk ? (Color){255, 140, 125, 255} : COL_DIM); ry += 30;
  Tb("WHAT BUYERS WOULD PAY", rx, ry, 14, COL_DIM); ry += 22;
  for (int k = 0; k < NSEG; k++) {
   float v = ItemValue(it, k, -1); if (v <= 0) continue;
