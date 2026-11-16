@@ -1141,7 +1141,7 @@ static void Overview(int sw, int sh) {
 }
 
 static void SettingsPanel(int sw, int sh) {
- float w = 520, h = 628, x = sw * 0.5f - w * 0.5f, y = 66;
+ float w = 520, h = 690, x = sw * 0.5f - w * 0.5f, y = 62;
  Panel((Rectangle){x, y, w, h}, (Color){18, 20, 25, 252});
  DrawRectangleRoundedLinesEx((Rectangle){x, y, w, h}, 0.03f, 8, 1.5f, COL_LINE);
  Tb("SETTINGS", x + 20, y + 16, 24, COL_TXT);
@@ -1159,7 +1159,22 @@ static void SettingsPanel(int sw, int sh) {
  snprintf(vb, 32, "%.0f%%", gSet.sfx * 100); UiSlider(25, (Rectangle){rx, yy, rw, 40}, "Effects", &gSet.sfx, 0, 2, 0.05f, vb, NULL, 1); yy += 54;
  Tb("GRAPHICS", rx, yy, 14, COL_DIM); yy += 22;
  snprintf(vb, 32, "%.0fx", gSet.smoke); UiSlider(26, (Rectangle){rx, yy, rw, 40}, "Smoke amount", &gSet.smoke, 0, 20, 1, vb, NULL, 1); yy += 46;
- if ((d = UiSelect((Rectangle){rx, yy, rw, 40}, "Motion blur", gSet.blur ? "On" : "Off", "Blurs pistons, flywheel and fan at real rpm.", 1))) gSet.blur ^= 1; yy += 46;
+ if ((d = UiSelect((Rectangle){rx, yy, rw, 40}, "Motion blur", gSet.blur ? "On" : "Off", "Blurs pistons, flywheel and fan at real rpm.", 1))) gSet.blur ^= 1; yy += 54;
+ static int wipeArm = 0;
+ Rectangle wr = {rx, yy, rw, 40};
+ if (UiButton(wr, wipeArm ? "CLICK AGAIN TO ERASE EVERYTHING" : "WIPE ALL DATA (restart from scratch)", 3, 1)) {
+  if (!wipeArm) wipeArm = 1;
+  else {
+   wipeArm = 0;
+   remove(SavePath()); remove(CfgPath()); remove(CareerPath()); remove("engine_garage_shop.dat");
+   memset(&gSave, 0, sizeof gSave);
+   Settings def = {0x53455431, 0, 0, 1, 0, 1.f, 1.f, 0.85f, 1.f, 0.6f, 1.f, 10.f}; gSet = def;
+   CareerNew(); gShop = 0; gShopTab = 0; gInvSel = -1;
+   gB = PRESETS[3]; gPreset = 3; gSlot = 0; gTab = 0; gMode = 0; OnBuildChanged(); ResetCamDist();
+   gShowSettings = 0;
+   ToastAdd("Everything wiped. Fresh start.", COL_RED); SfxPush(SFX_WARN);
+  }
+ } else if (MPress && !CheckCollisionPointRec(MP, wr)) wipeArm = 0;
  (void)sh;
 }
 
@@ -1563,8 +1578,8 @@ int main(int argc, char **argv) {
   if (gShowSettings) SettingsPanel(sw, sh);
   Toasts(sw, dt);
   EndDrawing();
-  if (shopShot && ++shF == 6) { snprintf(gShotDir, 256, "%s", getenv("SHOPSHOT")); Shot(TextFormat("shop%d", shT)); shF = 0; if (++shT >= 9) break; gShopTab = shT; }
-  if (uiShot && ++uiF == 8) { snprintf(gShotDir, 256, "%s", getenv("UISHOT")); Shot(TextFormat("ui%d", uiShot)); if (++uiShot > 2) break; uiF = 0; gTab = 4; gShowOverview = uiShot == 2; }
+  if (shopShot && ++shF == 6) { snprintf(gShotDir, 256, "%s", getenv("SHOPSHOT")); Shot(TextFormat("shop%d", shT)); shF = 0; if (++shT >= 8) break; gShopTab = shT; }
+  if (uiShot && ++uiF == 8) { snprintf(gShotDir, 256, "%s", getenv("UISHOT")); Shot(TextFormat("ui%d", uiShot)); if (++uiShot > 3) break; uiF = 0; gTab = 4; gShowOverview = uiShot == 2; gShowSettings = uiShot == 3; }
  }
  if (audioOk) { UnloadAudioStream(stream); CloseAudioDevice(); }
  CloseWindow();

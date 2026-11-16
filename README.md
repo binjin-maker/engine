@@ -14,7 +14,6 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
 - **Ignition:** points, distributor, CDI or coil-on-plug, each with its own rpm and boost limits. Coil ignitions need a battery.
 - **Cam drive:** chain, gear or belt. Belts jump teeth above ~9000 rpm.
 - **Shake:** an imbalanced layout shakes the engine on the dyno and can crack the crank at high rpm.
-- **Materials:** cast iron, cast aluminum, CGI, magnesium, billet. Weak materials lose strength as castings get bigger, and some are unviable past a size. Each has its own heat and compression tolerance.
 - **Rated parts catalog.** Every part has ratings and fitment:
   - Flywheels: small-engine magneto vs ring-gear, each with an rpm burst rating
   - Starters: recoil (small/medium/decompressor) and electric (0.4-4.5 kW), each rated by displacement and needing the right flywheel
@@ -28,7 +27,6 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
 ## Running a shop
 Press **H** (or the green SHOP button) to open your shop office. You start with $10,000.
 - **Workshop:** buy a fabrication bench ($3,500) and you can build the design on your bench at volume (10k-unit) cost. Later: engine dyno (dyno sheets sell for more), CNC (faster, needed for billet), foundry (cheap castings, needed for CGI/magnesium), a second bay, a warehouse, a paint booth and a $75k production line for batch builds at volume cost.
-- **Materials:** cast iron, aluminum, CGI, magnesium, billet, steel and titanium with daily prices, shortages, local buys and cheaper bulk orders. Run short mid-build and it rush-buys at +25%.
 - **Marketplaces:** LocalList (free, few buyers, lowballers and scammers), SwapBay (listing + final value fees), TorqueTrader (enthusiasts, subscription, needs reputation), your own website (setup + hosting), IndustrialSource (B2B), or dump it on a dealer for 55%.
 - **Buyers:** lawn & garden, karts, bikes, cars, racing, trucks, marine, industrial, aircraft and collectors each judge your engine differently and have budgets. They buy, make offers, or walk.
 - **Competitors:** 22 rival engines from 13 makers across every segment, each with a price and quality rating. Buyers take whoever gives the better deal for the quality. Sell into a rival's segment and they cut prices (and sometimes upgrade); stop and they drift back up. The MARKET tab shows their prices, sales and your share.
@@ -36,6 +34,7 @@ Press **H** (or the green SHOP button) to open your shop office. You start with 
 - **Advertising:** flyers, social, search ads, racing magazines, trade journals and trade show booths, each pulling different buyers to different sites.
 - **Risk:** engines with red warnings fail after the sale. A warranty sells for more but you refund failures; as-is costs you reputation.
 - **Contracts, rent, utilities, a bank loan,** and a ledger. Go below -$15,000 and the bank takes the shop.
+- **Wipe:** Settings > WIPE ALL DATA erases saves, settings and the shop so you can start over.
 
 ## The sim
 Calibrated against real engines (Predator 212, Honda GCV160, YZ250, EA888, LS3, Cummins 6.7, Lamborghini V12, VW 1600, Honda K20) to within about ±15%.

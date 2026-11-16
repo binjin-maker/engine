@@ -95,7 +95,7 @@ static int gShop = 0, gShopTab = 0, gInvSel = -1;
 
 static float CR01(void) { C.rng = C.rng * 1664525u + 1013904223u; return ((C.rng >> 8) & 0xffffff) / 16777216.f; }
 static int CPois(float lam) { if (lam <= 0) return 0; int k = 0; float L = expf(-fminf(lam, 60)), p = 1; do { k++; p *= CR01(); } while (p > L && k < 200); return k - 1; }
-static const char *CareerPath(void) { return "engine_garage_shop.dat"; }
+static const char *CareerPath(void) { return TextFormat("%sengine_garage_shop.dat", GetApplicationDirectory()); }
 static int gNoCareerSave = 0;
 static void CareerSave(void) { if (!gAutotest && !gNoCareerSave) SaveFileData(CareerPath(), &C, sizeof C); }
 static void CLog(float amt, const char *fmt, ...) {
@@ -195,8 +195,7 @@ static Quote ShopQuote(const Build *b, int batch) {
  for (int m = 0; m < NMAT; m++) {
   float kg = s.matKg[m] * (m == 4 ? waste : (C.equip[2] ? 0.93f : 1.f)) * 0.85f;
   q.matKg[m] = kg;
-  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.2f : 1.f);
-  q.matCost += kg * pr;
+  q.matCost += kg * MAT_BASE[m] * ((m <= 3 && !C.equip[3]) ? 1.2f : 1.f);
  }
  // priced like a 10k-unit run: parts at volume prices, labor at line rates
  q.bought = s.bought * (batch ? 0.22f : 0.25f);
@@ -212,15 +211,7 @@ static Quote ShopQuote(const Build *b, int batch) {
  else if (batch && !C.equip[5]) { q.ok = 0; snprintf(q.why, 96, "Batch builds need a production line."); }
  return q;
 }
-static float QuoteTotal(const Quote *q, int qty) {
- float mat = 0;
- for (int m = 0; m < NMAT; m++) {
-  float need = q->matKg[m] * qty, have = fminf(C.stock[m], need);
-  float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.2f : 1.f);
-  mat += have * (C.stock[m] > 0 ? C.stockCost[m] / C.stock[m] : pr) + (need - have) * pr * 1.25f;
- }
- return mat + (q->bought + q->consum) * qty;
-}
+static float QuoteTotal(const Quote *q, int qty) { return (q->matCost + q->bought + q->consum) * qty; }
 static int JobSlots(void) { return C.equip[4] ? 2 : 1; }
 static int StartBuild(const Build *b, int qty) {
  int batch = qty > 1;
@@ -231,11 +222,6 @@ static int StartBuild(const Build *b, int qty) {
  if (slot < 0 || (!batch && busy >= JobSlots())) { ToastAdd("All build bays are busy.", COL_YEL); return 0; }
  float total = QuoteTotal(&q, qty);
  if (total > C.money) { ToastAdd(TextFormat("Need $%.0f, you have $%.0f.", total, C.money), COL_RED); return 0; }
- // consume stock, rush-buy the shortfall
- for (int m = 0; m < NMAT; m++) {
-  float need = q.matKg[m] * qty, have = fminf(C.stock[m], need);
-  if (have > 0) { float avg = C.stockCost[m] / C.stock[m]; C.stock[m] -= have; C.stockCost[m] -= avg * have; if (C.stock[m] < 0.01f) C.stock[m] = C.stockCost[m] = 0; }
- }
  Job *jb = &C.job[slot]; memset(jb, 0, sizeof *jb);
  jb->used = 1; jb->qty = qty; jb->batch = batch; jb->b = *b; jb->hoursTotal = jb->hoursLeft = batch ? fmaxf(8, qty * q.hours) : q.hours; jb->costEach = total / qty;
  BuildName(b, jb->name, 32);
@@ -304,12 +290,6 @@ static const char *BuyerName(void) {
 }
 static void ShopDay(void) {
  C.day++;
- // material prices drift; the odd shortage
- for (int m = 0; m < NMAT; m++) {
-  C.price[m] *= 1 + (CR01() - 0.5f) * 0.05f + (MAT_BASE[m] - C.price[m]) / MAT_BASE[m] * 0.06f;
-  if (CR01() < 0.004f) { C.price[m] *= 1.4f; CLog(0, "%s shortage! Prices jumped.", MAT_NAME[m]); }
-  if (C.bulkDays[m] > 0 && --C.bulkDays[m] == 0) { C.stock[m] += C.bulkKg[m]; C.stockCost[m] += C.bulkCost[m]; CLog(0, "Bulk %s delivery arrived (%.0f kg)", MAT_NAME[m], C.bulkKg[m]); C.bulkKg[m] = C.bulkCost[m] = 0; }
- }
  // shop floor
  int singles = 0;
  for (int j = 0; j < NJOB; j++) {
@@ -472,8 +452,8 @@ static void TabDashboard(float x, float y, float w, float h) {
  const char *steps[] = {
   "1. WORKSHOP: buy a fabrication bench.",
   "2. Design an engine on the build bench, then BUILD it here.",
-  "   Parts are bought new; metal comes from your stock or",
-  "   gets rush-bought at +25%. Stock up in MATERIALS.",
+  "   Parts and metal are paid for when the build starts.",
+  "",
   "3. INVENTORY: price it, pick a site, list it.",
   "4. Press NEXT DAY. Buyers browse, buy or make offers.",
   "5. ADVERTISING brings more buyers of the right kind.",
@@ -523,7 +503,7 @@ static void TabWorkshop(float x, float y, float w, float h) {
  int bs; float val = BestValue(&tmp, 1, &bs);
  ry = ShopRow(rx, ry, cw, "Bought parts at volume prices", TextFormat("$%.0f", q.bought), COL_TXT);
  float mk = 0; for (int m = 0; m < NMAT; m++) mk += q.matKg[m];
- ry = ShopRow(rx, ry, cw, TextFormat("Metal (%.0f kg, stock first, rest rush-bought)", mk), TextFormat("$%.0f", tot - q.bought - q.consum), COL_TXT);
+ ry = ShopRow(rx, ry, cw, TextFormat("Metal (%.0f kg)%s", mk, C.equip[3] ? "" : ", castings outsourced +20%"), TextFormat("$%.0f", q.matCost), COL_TXT);
  ry = ShopRow(rx, ry, cw, "Labor, consumables & power", TextFormat("$%.0f", q.consum), COL_TXT);
  ry = ShopRow(rx, ry, cw, "Build time", TextFormat("%.0f h  (%.1f days)", q.hours, q.days), COL_TXT);
  ry = ShopRow(rx, ry, cw, "Total cost to build one", TextFormat("$%.0f", tot), COL_ACC);
@@ -553,34 +533,6 @@ static void TabWorkshop(float x, float y, float w, float h) {
   ry += 52;
  }
  if (!any) Tx(C.equip[0] ? "Bays are empty." : "No fabrication bench yet.", rx, ry, 15, COL_DIM);
- (void)h;
-}
-
-static void TabMaterials(float x, float y, float w, float h) {
- Tb("RAW STOCK", x, y, 18, COL_DIM);
- Tx("Buy ahead when prices are low. Without a foundry, cast metals come as outsourced castings (+20%). Running short during a build rush-buys at +25%.", x, y + 26, 14, COL_DIM);
- float yy = y + 60;
- float cols[] = {x, x + 190, x + 330, x + 470, x + 610};
- Tb("Material", cols[0], yy, 14, COL_DIM); Tb("Price/kg", cols[1], yy, 14, COL_DIM); Tb("In stock", cols[2], yy, 14, COL_DIM); Tb("Avg paid", cols[3], yy, 14, COL_DIM); Tb("Buy now (local)          Bulk 1 t: -20%, 4 days", cols[4], yy, 14, COL_DIM);
- yy += 24;
- Quote q = ShopQuote(&gB, 0);
- for (int m = 0; m < NMAT; m++) {
-  DrawRectangleRounded((Rectangle){x, yy - 4, w, 40}, 0.15f, 6, m & 1 ? COL_PANEL : (Color){24, 27, 32, 255});
-  Tb(MAT_NAME[m], cols[0] + 8, yy + 6, 15, COL_TXT);
-  float tr = C.price[m] / MAT_BASE[m];
-  Tx(TextFormat("$%.2f", C.price[m]), cols[1], yy + 6, 15, tr > 1.1f ? COL_RED : (tr < 0.93f ? COL_GRN : COL_TXT));
-  Tx(TextFormat("%.0f kg%s", C.stock[m], C.bulkDays[m] ? TextFormat(" (+%.0f in %dd)", C.bulkKg[m], C.bulkDays[m]) : ""), cols[2], yy + 6, 15, COL_TXT);
-  Tx(C.stock[m] > 0 ? TextFormat("$%.2f", C.stockCost[m] / C.stock[m]) : "-", cols[3], yy + 6, 15, COL_DIM);
-  static const float AMT[3] = {25, 100, 500};
-  for (int k = 0; k < 3; k++) {
-   float kg = AMT[k], c = kg * C.price[m] * (k == 0 ? 1.1f : 1.f);
-   if (UiButton((Rectangle){cols[4] + k * 96, yy, 90, 32}, TextFormat("%.0f kg", kg), 0, C.money >= c)) { Pay(c, TextFormat("Bought %.0f kg %s", kg, MAT_NAME[m])); C.stock[m] += kg; C.stockCost[m] += c; CareerSave(); }
-  }
-  float bc = 1000 * C.price[m] * 0.8f;
-  if (UiButton((Rectangle){cols[4] + 300, yy, 150, 32}, TextFormat("1 t  $%.0f", bc), 0, C.money >= bc && !C.bulkDays[m])) { Pay(bc, TextFormat("Bulk order: 1 t %s", MAT_NAME[m])); C.bulkDays[m] = 4; C.bulkKg[m] = 1000; C.bulkCost[m] = bc; CareerSave(); }
-  if (q.matKg[m] > 0.5f) TxR(TextFormat("design needs %.0f kg", q.matKg[m]), x + w - 8, yy + 8, 13, C.stock[m] >= q.matKg[m] ? COL_GRN : COL_YEL, 0);
-  yy += 46;
- }
  (void)h;
 }
 
@@ -848,14 +800,14 @@ static void ShopScreen(int sw, int sh) {
  if (UiButton((Rectangle){sw - 320, y - 2, 140, 40}, "NEXT DAY", 1, !C.over)) { ShopDay(); SfxPush(SFX_TICK); }
  if (UiButton((Rectangle){sw - 170, y - 2, 150, 40}, "SKIP 7 DAYS", 0, !C.over)) { for (int i = 0; i < 7; i++) { int s0 = C.sales, o0 = 0; for (int o = 0; o < NOFFER; o++) o0 += C.off[o].used; ShopDay(); int o1 = 0; for (int o = 0; o < NOFFER; o++) o1 += C.off[o].used; if (C.sales != s0 || o1 > o0) break; } }
  // tabs
- static const char *T[] = {"DASHBOARD", "WORKSHOP", "MATERIALS", "INVENTORY", "MARKET", "SITES", "ADVERTISING", "CONTRACTS", "BANK"};
- float tw = (w) / 9.f, ty = y + 52;
- for (int i = 0; i < 9; i++) {
+ static const char *T[] = {"DASHBOARD", "WORKSHOP", "INVENTORY", "MARKET", "SITES", "ADVERTISING", "CONTRACTS", "BANK"};
+ float tw = (w) / 8.f, ty = y + 52;
+ for (int i = 0; i < 8; i++) {
   Rectangle tr = {x + i * tw, ty, tw - 6, 36};
   int hov = CheckCollisionPointRec(MP, tr);
   DrawRectangleRounded(tr, 0.3f, 8, gShopTab == i ? COL_ACC : (hov ? COL_PANEL2 : COL_PANEL));
   const char *lbl = T[i];
-  if (i == 3 && of) lbl = TextFormat("INVENTORY (%d)", of);
+  if (i == 2 && of) lbl = TextFormat("INVENTORY (%d)", of);
   TxC(lbl, tr.x + tr.width * 0.5f, tr.y + 10, 14, gShopTab == i ? (Color){18, 18, 20, 255} : COL_TXT, 1);
   if (hov && MPress && gShopTab != i) { gShopTab = i; SfxPush(SFX_SELECT); }
  }
@@ -865,17 +817,16 @@ static void ShopScreen(int sw, int sh) {
  if (C.over) {
   TxC("BANKRUPT", sw * 0.5f, py + 120, 48, COL_RED, 1);
   TxC("The bank took the shop. Start a new career from the BANK tab.", sw * 0.5f, py + 180, 18, COL_TXT, 0);
-  if (gShopTab != 8) return;
+  if (gShopTab != 7) return;
  }
  switch (gShopTab) {
  case 0: TabDashboard(px, py, pw, ph); break;
  case 1: TabWorkshop(px, py, pw, ph); break;
- case 2: TabMaterials(px, py, pw, ph); break;
- case 3: TabInventory(px, py, pw, ph); break;
- case 4: TabMarket(px, py, pw, ph); break;
- case 5: TabSites(px, py, pw, ph); break;
- case 6: TabAds(px, py, pw, ph); break;
- case 7: TabContracts(px, py, pw, ph); break;
- case 8: TabBank(px, py, pw, ph); break;
+ case 2: TabInventory(px, py, pw, ph); break;
+ case 3: TabMarket(px, py, pw, ph); break;
+ case 4: TabSites(px, py, pw, ph); break;
+ case 5: TabAds(px, py, pw, ph); break;
+ case 6: TabContracts(px, py, pw, ph); break;
+ case 7: TabBank(px, py, pw, ph); break;
  }
 }
