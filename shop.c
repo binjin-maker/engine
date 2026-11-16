@@ -15,12 +15,12 @@ static const float MAT_BASE[NMAT] = {1.4f, 3.2f, 2.6f, 9.0f, 7.5f, 2.3f, 38.f};
 
 typedef struct { const char *name, *desc; float cost; } EquipDef;
 static const EquipDef EQUIP[NEQ] = {
- {"Fabrication bench", "Lathe, mill, welder and hand tools. Builds one-off engines, one at a time.", 3500},
+ {"Fabrication bench", "Lathe, mill, welder and hand tools. Builds engines one at a time.", 3500},
  {"Engine dyno", "Every engine leaves with a dyno sheet. Buyers trust proven numbers and pay more.", 2500},
  {"CNC machining center", "Machines twice as fast, wastes less stock. Needed for billet blocks and billet internals.", 14000},
  {"Foundry", "Pour your own castings: cast blocks cost far less. Needed for CGI and magnesium blocks.", 22000},
  {"Second build bay", "Run two builds at once.", 9000},
- {"Production line", "Batch-build copies of a design at volume cost. 5 engines a day.", 75000},
+ {"Production line", "Batch-build copies of a design, 5 engines a day, parts a bit cheaper.", 75000},
  {"Warehouse", "Store up to 24 finished engines instead of 4.", 6000},
  {"Paint & finish booth", "Powder coat and detail every engine. Buyers pay about 8% more.", 4000},
 };
@@ -193,14 +193,15 @@ static Quote ShopQuote(const Build *b, int batch) {
  Spec s; ComputeSpec(b, &s);
  float waste = C.equip[2] ? 0.8f : 1.f;
  for (int m = 0; m < NMAT; m++) {
-  float kg = s.matKg[m] * (m == 4 ? waste : (C.equip[2] ? 0.93f : 1.f)) * (batch ? 0.85f : 1.f);
+  float kg = s.matKg[m] * (m == 4 ? waste : (C.equip[2] ? 0.93f : 1.f)) * 0.85f;
   q.matKg[m] = kg;
   float pr = C.price[m] * ((m <= 3 && !C.equip[3]) ? 1.45f : 1.f);
   q.matCost += kg * pr;
  }
- q.bought = s.bought * (batch ? 0.45f : 0.9f);
- q.consum = batch ? 15 : 60 + 10 * NumCyl(b);
- q.hours = batch ? 8.f / 5.f : s.machHours * 6.f / (C.equip[2] ? 2.f : 1.f);
+ // priced like a 10k-unit run: parts at volume prices, labor at line rates
+ q.bought = s.bought * (batch ? 0.22f : 0.25f);
+ q.consum = 4 + 3 * NumCyl(b) + s.machHours * 0.12f * 40.f;
+ q.hours = batch ? 8.f / 5.f : s.machHours * 3.f / (C.equip[2] ? 2.f : 1.f);
  q.days = q.hours / 8.f;
  q.ok = 1;
  char w[16][96]; int sev[16]; int nw = BuildWarnings(b, &s, w, sev, 16);
@@ -480,9 +481,9 @@ static void TabDashboard(float x, float y, float w, float h) {
   "   refunds with a warranty, bad reviews without one.",
   "7. Reputation unlocks better sites and contracts.",
   "",
-  "Cheap little engines cost more to make one at a time than",
-  "they sell for. One-offs pay on big, special engines; the",
-  "production line makes volume engines pay.",
+  "Rivals undercut you when you steal their buyers. Beat them",
+  "on price or quality, or build what nobody else sells.",
+  "",
  };
  for (int i = 0; i < 14; i++) { Tx(steps[i], rx, ry, 15, i >= 11 ? COL_YEL : COL_TXT); ry += 21; }
  ry += 10; Tb("RECENT", rx, ry, 14, COL_DIM); ry += 22;
@@ -520,10 +521,10 @@ static void TabWorkshop(float x, float y, float w, float h) {
  float tot = QuoteTotal(&q, 1);
  Item tmp; ItemFromBuild(&tmp, &gB);
  int bs; float val = BestValue(&tmp, 1, &bs);
- ry = ShopRow(rx, ry, cw, "Bought parts (carbs, turbo, starter...)", TextFormat("$%.0f", q.bought), COL_TXT);
+ ry = ShopRow(rx, ry, cw, "Bought parts at volume prices", TextFormat("$%.0f", q.bought), COL_TXT);
  float mk = 0; for (int m = 0; m < NMAT; m++) mk += q.matKg[m];
  ry = ShopRow(rx, ry, cw, TextFormat("Metal (%.0f kg, stock first, rest rush-bought)", mk), TextFormat("$%.0f", tot - q.bought - q.consum), COL_TXT);
- ry = ShopRow(rx, ry, cw, "Consumables & power", TextFormat("$%.0f", q.consum), COL_TXT);
+ ry = ShopRow(rx, ry, cw, "Labor, consumables & power", TextFormat("$%.0f", q.consum), COL_TXT);
  ry = ShopRow(rx, ry, cw, "Build time", TextFormat("%.0f h  (%.1f days)", q.hours, q.days), COL_TXT);
  ry = ShopRow(rx, ry, cw, "Total cost to build one", TextFormat("$%.0f", tot), COL_ACC);
  ry = ShopRow(rx, ry, cw, TextFormat("Est. market value (%s)", SEG_NAME[bs]), val > 0 ? TextFormat("$%.0f", val) : "nobody wants it", val > tot ? COL_GRN : COL_RED);

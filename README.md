@@ -27,7 +27,7 @@ Build an engine from real, rated parts, bolt it to a dyno stand, fire it up and 
 
 ## Running a shop
 Press **H** (or the green SHOP button) to open your shop office. You start with $10,000.
-- **Workshop:** buy a fabrication bench ($3,500) and you can build the design on your bench one-off. Later: engine dyno (dyno sheets sell for more), CNC (faster, needed for billet), foundry (cheap castings, needed for CGI/magnesium), a second bay, a warehouse, a paint booth and a $75k production line for batch builds at volume cost.
+- **Workshop:** buy a fabrication bench ($3,500) and you can build the design on your bench at volume (10k-unit) cost. Later: engine dyno (dyno sheets sell for more), CNC (faster, needed for billet), foundry (cheap castings, needed for CGI/magnesium), a second bay, a warehouse, a paint booth and a $75k production line for batch builds at volume cost.
 - **Materials:** cast iron, aluminum, CGI, magnesium, billet, steel and titanium with daily prices, shortages, local buys and cheaper bulk orders. Run short mid-build and it rush-buys at +25%.
 - **Marketplaces:** LocalList (free, few buyers, lowballers and scammers), SwapBay (listing + final value fees), TorqueTrader (enthusiasts, subscription, needs reputation), your own website (setup + hosting), IndustrialSource (B2B), or dump it on a dealer for 55%.
 - **Buyers:** lawn & garden, karts, bikes, cars, racing, trucks, marine, industrial, aircraft and collectors each judge your engine differently and have budgets. They buy, make offers, or walk.

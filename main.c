@@ -731,7 +731,7 @@ static void SpecCard(int sw, int sh) {
  for (int i = 0; i < 6; i++) {
   Tx(rows[i].k, x + 14, yy, 15, COL_DIM); TxR(rows[i].v, x + w - 14, yy, 15, COL_TXT, 1); yy += 21;
  }
- Tx("Build cost: one-off / @10k units", x + 14, yy, 15, COL_DIM); TxR(TextFormat("$%.0f / $%.0f", gS.mfgOne, gS.mfgK), x + w - 14, yy, 15, COL_TXT, 1); yy += 21;
+ Tx("Cost to build", x + 14, yy, 15, COL_DIM); TxR(TextFormat("$%.0f", gS.mfgK), x + w - 14, yy, 15, COL_TXT, 1); yy += 21;
  if (nw) {
   yy += 6;
   Tb("WARNINGS", x + 14, yy, 14, COL_YEL); yy += 20;
@@ -1061,8 +1061,7 @@ static void Overview(int sw, int sh) {
  ROWV("Specific output", "%.0f hp/L   %.2f hp/kg", s->estHp / fmaxf(s->dispL, 0.01f), s->estHp / s->weight);
  for (int i = 0; i < n; i++) { Tx(r[i].k, c1, yy, 15, COL_DIM); TxR(r[i].v, c1 + cw, yy, 15, COL_TXT, 1); yy += 21; }
  yy += 12; Tb("COST", c1, yy, 15, COL_DIM); yy += 24; n = 0;
- ROWV("Manufacture, one-off prototype", "$%.0f", s->mfgOne);
- ROWV("Manufacture @ 10,000 units", "$%.0f each", s->mfgK);
+ ROWV("Cost to build", "$%.0f each", s->mfgK);
  ROWV("Est. retail price", "$%.0f", s->cost);
  ROWV("Margin per unit", "$%.0f", s->cost - s->mfgK);
  for (int i = 0; i < n; i++) { Tx(r[i].k, c1, yy, 15, COL_DIM); TxR(r[i].v, c1 + cw, yy, 15, COL_TXT, 1); yy += 21; }
